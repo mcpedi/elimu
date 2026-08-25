@@ -56,8 +56,8 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
   const initials = (user.name || "School User").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
 
   return (
-    <div className="min-h-screen bg-[#f4f7f5] text-slate-900 dark:bg-[#101b18] dark:text-slate-100">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[270px] flex-col border-r border-emerald-950/10 bg-[#0d4437] px-4 py-5 text-emerald-50 lg:flex">
+    <div className="min-h-screen bg-[#f4f7f5] text-slate-900 dark:bg-[#101b18] dark:text-slate-100 lg:h-screen lg:overflow-hidden">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[270px] flex-col overflow-y-auto border-r border-emerald-950/10 bg-[#0d4437] px-4 py-5 text-emerald-50 lg:flex workspace-sidebar-scroll">
         <div className="flex items-center gap-3 px-2">
           <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#d5a74b] text-[#16382f] shadow-[0_12px_28px_-12px_rgba(0,0,0,0.65)]"><School className="h-5 w-5" /></div>
           <div className="min-w-0"><p className="font-serif text-lg font-semibold tracking-[-0.03em]">Shule</p><p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/55">School workspace</p></div>
@@ -82,7 +82,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
         </div>
       </aside>
 
-      <div className="lg:pl-[270px]">
+      <div className="lg:flex lg:h-screen lg:min-h-0 lg:flex-col lg:pl-[270px]">
         <header className="sticky top-0 z-20 border-b border-emerald-950/8 bg-[#f4f7f5]/90 px-4 py-3 backdrop-blur-xl dark:border-white/8 dark:bg-[#101b18]/90 sm:px-6 lg:px-9">
           <div className="flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
@@ -99,7 +99,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-[1600px] px-4 py-6 pb-24 sm:px-6 lg:px-9 lg:py-8 lg:pb-10">{children}</main>
+        <main className="workspace-scroll mx-auto max-w-[1600px] px-4 py-6 pb-24 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-9 lg:py-8 lg:pb-10">{children}</main>
       </div>
 
       {mobileOpen ? <div className="fixed inset-0 z-50 lg:hidden"><button aria-label="Close navigation overlay" className="absolute inset-0 bg-[#092f26]/55 backdrop-blur-[2px]" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-[84%] max-w-[320px] bg-[#0d4437] px-4 py-5 text-emerald-50 shadow-2xl"><div className="flex items-center justify-between px-2"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#d5a74b] text-[#16382f]"><School className="h-5 w-5" /></div><span className="font-serif text-lg font-semibold">Shule</span></div><Button variant="ghost" size="icon" className="rounded-xl text-white hover:bg-white/10 hover:text-white" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X className="h-5 w-5" /></Button></div><nav className="mt-8 space-y-1">{navigation.map(item => { const Icon = item.icon; const active = item.id === activeId; return <button key={item.id} onClick={() => navigate(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${active ? "bg-white/14 text-white" : "text-emerald-50/70"}`}><Icon className={`h-[18px] w-[18px] ${active ? "text-[#e4bd69]" : ""}`} /><span className="font-medium">{item.label}</span></button>; })}</nav></div></div> : null}

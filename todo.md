@@ -33,3 +33,11 @@
 - [x] Add a protected school-logo upload workflow with image validation and object-storage persistence outside the database.
 - [x] Display the saved logo in school settings and in printable statement and receipt headers.
 - [x] Add secure upload, logo-display, document-rendering, and regression tests.
+- [x] Make the desktop workspace content independently scrollable so users can move up and down without losing the navigation shell.
+- [x] Improve the visible workspace setup-fetch failure state so transient setup errors do not leave the main workspace unusable.
+- [x] Validate desktop and mobile scrolling plus the setup-error recovery path with type checks, tests, and visual review.
+- [x] Add focused Overview readiness tests for transient setup-status failure, dashboard fallback loading, and retry behavior.
+- [x] Capture a mobile viewport visual review after the scrolling/layout change.
+- [x] Re-run typecheck, tests, and targeted visual validation, then finalize the workspace-navigation checkpoint.
+- [x] Save a new checkpoint capturing the desktop scroll-container and setup-error recovery changes after the validated typecheck, test, and screenshot pass.
+- [x] Add a brief delivery note referencing the new workspace-navigation checkpoint.

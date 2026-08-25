@@ -78,12 +78,11 @@ function SetupSchool() {
 }
 
 function Overview() {
-  const readiness = trpc.school.setup.status.useQuery();
-  const dashboard = trpc.school.dashboard.useQuery(undefined, { retry: false, enabled: readiness.data?.exists === true });
-  if (readiness.isLoading || (readiness.data?.exists && dashboard.isLoading)) return <DashboardSkeleton />;
+  const readiness = trpc.school.setup.status.useQuery(undefined, { retry: 3, retryDelay: attempt => Math.min(1000 * (attempt + 1), 3000), refetchOnWindowFocus: true });
+  const dashboard = trpc.school.dashboard.useQuery(undefined, { retry: 2, retryDelay: attempt => Math.min(1000 * (attempt + 1), 3000), enabled: shouldAttemptDashboard(readiness.data?.exists) });
+  if (readiness.isLoading || dashboard.isLoading) return <DashboardSkeleton />;
   if (readiness.data && !readiness.data.exists) return <SetupSchool />;
-  if (readiness.error) return <ErrorState title="Unable to confirm workspace setup" description={readiness.error.message} />;
-  if (dashboard.error) return <ErrorState title="Unable to load the workspace" description={dashboard.error.message} />;
+  if (!dashboard.data && (readiness.error || dashboard.error)) return <ErrorState title="Unable to load the workspace" description={(chooseWorkspaceError(readiness.error, dashboard.error) as { message?: string } | null)?.message ?? "Please try again."} onRetry={() => refetchWorkspace(readiness.refetch, dashboard.refetch)} />;
   const data = dashboard.data;
   if (!data) return null;
   if (data.kind === "portal") return <PortalOverview data={data} />;
@@ -120,7 +119,10 @@ function QuickAction({ icon: Icon, title, copy }: { icon: typeof Users; title: s
 
 function EmptyTable({ colSpan, label }: { colSpan: number; label: string }) { return <tr><td colSpan={colSpan} className="px-2 py-10 text-center text-sm text-slate-400">{label}</td></tr>; }
 function EmptyText({ label }: { label: string }) { return <p className="rounded-xl border border-dashed border-emerald-950/12 p-4 text-sm leading-6 text-slate-500 dark:border-white/12 dark:text-slate-400">{label}</p>; }
-function ErrorState({ title, description }: { title: string; description: string }) { return <Card className="border-rose-200 bg-rose-50 dark:border-rose-950 dark:bg-rose-950/30"><CardContent className="p-6"><p className="font-semibold text-rose-900 dark:text-rose-100">{title}</p><p className="mt-2 text-sm text-rose-700 dark:text-rose-300">{description}</p></CardContent></Card>; }
+export function shouldAttemptDashboard(exists: boolean | undefined) { return exists !== false; }
+export function chooseWorkspaceError(readinessError: unknown, dashboardError: unknown) { return dashboardError ?? readinessError ?? null; }
+export function refetchWorkspace(readinessRefetch: () => unknown, dashboardRefetch: () => unknown) { void readinessRefetch(); void dashboardRefetch(); }
+function ErrorState({ title, description, onRetry }: { title: string; description: string; onRetry?: () => void }) { return <Card className="border-rose-200 bg-rose-50 dark:border-rose-950 dark:bg-rose-950/30"><CardContent className="p-6"><p className="font-semibold text-rose-900 dark:text-rose-100">{title}</p><p className="mt-2 text-sm text-rose-700 dark:text-rose-300">{description}</p>{onRetry ? <Button variant="outline" className="mt-4 rounded-xl border-rose-300 bg-white text-rose-900 hover:bg-rose-100 dark:border-rose-800 dark:bg-transparent dark:text-rose-100" onClick={onRetry}>Try again</Button> : null}</CardContent></Card>; }
 function DashboardSkeleton() { return <div className="space-y-5"><Skeleton className="h-16 w-2/5" /><div className="grid gap-4 sm:grid-cols-3"><Skeleton className="h-36" /><Skeleton className="h-36" /><Skeleton className="h-36" /></div><Skeleton className="h-72" /></div>; }
 
 function StudentsPanel() {
