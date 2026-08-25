@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { hashStudentSecret, normalizeStudentIdentifier, verifyStudentSecret } from "./student-auth";
+import { hashStudentSecret, normalizeStudentIdentifier, normalizeStudentUsername, normalizeStudentUsernameInput, verifyStudentSecret } from "./student-auth";
 
 describe("student credential helpers", () => {
   it("normalizes admission identifiers consistently", () => {
     expect(normalizeStudentIdentifier("  adm-0042 ")).toBe("ADM-0042");
+  });
+
+  it("normalizes learner usernames from registered name fields and login input", () => {
+    expect(normalizeStudentUsername(" Amina ", "Otieno", "  Wanjiku ")).toBe("amina wanjiku otieno");
+    expect(normalizeStudentUsernameInput("  AMINA   OT IENO ")).toBe("amina ot ieno");
   });
 
   it("hashes secrets with a salted scrypt record and rejects wrong values", async () => {

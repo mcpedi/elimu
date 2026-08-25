@@ -14,3 +14,15 @@ The post-cleanup desktop screenshot shows the sidebar labels remain readable and
 
 - Desktop preview after the clean restart rendered the authenticated dashboard shell with the existing independent workspace layout intact. The unauthenticated learner card could not be reached in the persistent logged-in preview session without manually logging out, so its behavior is covered by type checks and procedure tests.
 - Mobile preview at 375×812 retained the compact header, readable dashboard cards, and bottom navigation without horizontal overflow. The responsive student login component uses a single-column layout at this width and keeps admission-number, activation-code, and password fields stacked.
+
+## Simplified learner login visual validation
+
+The clean desktop preview retained the authenticated dashboard shell and primary navigation after the activation-code removal. The initial capture briefly showed the normal readiness skeleton while data loaded; the server then reported clean TypeScript and LSP health.
+
+The mobile preview at 375×812 retained the compact header, readable overview cards, and bottom navigation without visible horizontal overflow. The learner sign-in card is intentionally single-column at this breakpoint, with the full-name username and admission-number password fields stacked for touch use.
+
+## Final name-and-admission-number login visual validation
+
+The restarted desktop preview retained the full authenticated dashboard, fixed navigation shell, and independent workspace surface after the credential-model migration. The refreshed data loaded without visible layout errors.
+
+The 375×812 mobile preview retained readable cards, compact controls, and bottom navigation without visible horizontal overflow. The new learner card is designed as a single-column touch layout; the persistent preview session was already authenticated, so the unauthenticated card itself was validated through compilation and procedure coverage rather than a manual browser login.

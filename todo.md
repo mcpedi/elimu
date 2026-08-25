@@ -54,3 +54,17 @@
 - [x] Add secure student admission-number/password credential setup and login without weakening existing role authorization.
 - [x] Add a responsive learner login experience and protected own-results view with clear password lifecycle states.
 - [x] Add regression coverage for password hashing, login failures, school scoping, learner-only visibility, and audit events.
+
+- [x] Defer learner activation-code email delivery per the user’s revised scope; no email provider integration was added.
+- [x] Defer email-provider configuration and activation-email delivery per the user’s revised scope.
+- [x] Remove emailed activation-code UI and expiry tests per the user’s revised scope.
+
+- [x] Replace the emailed activation flow with a learner username derived from the name on the student record and the admission number as the initial password.
+- [x] Preserve hashed credential storage, school-scoped lookup, duplicate-name handling, rate limiting, secure session issuance, audit events, and own-results access in the simplified flow.
+- [x] Update learner and leadership UI copy to remove activation-code/email steps and explain the initial credentials safely.
+- [x] Add regression coverage for name normalization, duplicate-name rejection, admission-number password login, role restrictions, and results visibility.
+
+- [x] Add a safe migration/reset strategy so existing learner credentials from the earlier activation flow use the admission-number password model consistently.
+- [x] Add a regression test proving unauthorized roles cannot access learner-only results.
+
+- [x] Narrow the learner-auth regression checklist wording to the learner-only results authorization boundary actually covered by the test suite.

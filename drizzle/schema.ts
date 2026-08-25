@@ -158,6 +158,7 @@ export const studentCredentials = mysqlTable("studentCredentials", {
   id: int("id").autoincrement().primaryKey(),
   studentId: int("studentId").notNull().references(() => students.id),
   passwordHash: varchar("passwordHash", { length: 255 }),
+  passwordMode: mysqlEnum("passwordMode", ["admission_number", "legacy_activation"]).notNull().default("legacy_activation"),
   activationCodeHash: varchar("activationCodeHash", { length: 255 }),
   activationCodeExpiresAt: timestamp("activationCodeExpiresAt"),
   failedAttempts: int("failedAttempts").notNull().default(0),

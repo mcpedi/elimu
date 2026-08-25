@@ -15,7 +15,6 @@ const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SALT_BYTES = 16;
 
-export const STUDENT_ACTIVATION_TTL_MS = 24 * 60 * 60 * 1000;
 export const STUDENT_LOGIN_LOCK_MS = 15 * 60 * 1000;
 export const STUDENT_LOGIN_MAX_ATTEMPTS = 5;
 
@@ -23,8 +22,12 @@ export function normalizeStudentIdentifier(value: string) {
   return value.trim().toUpperCase();
 }
 
-export function createStudentActivationCode() {
-  return randomBytes(6).toString("hex").toUpperCase();
+export function normalizeStudentUsername(firstName: string, lastName: string, middleName?: string | null) {
+  return [firstName, middleName, lastName].filter(value => Boolean(value?.trim())).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function normalizeStudentUsernameInput(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export async function hashStudentSecret(secret: string) {
