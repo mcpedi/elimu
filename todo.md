@@ -41,3 +41,12 @@
 - [x] Re-run typecheck, tests, and targeted visual validation, then finalize the workspace-navigation checkpoint.
 - [x] Save a new checkpoint capturing the desktop scroll-container and setup-error recovery changes after the validated typecheck, test, and screenshot pass.
 - [x] Add a brief delivery note referencing the new workspace-navigation checkpoint.
+- [x] Consolidate all fee workflows under Fees, including structures, learner accounts, balances, payments, statements, receipts, and collection reports.
+- [x] Consolidate related workflows inside Students, Teachers, Academics, Attendance, Timetable, Announcements, Reports, and Settings instead of scattering actions across specialist screens.
+- [x] Improve navigation labels, section headings, workflow grouping, and in-page guidance so the workspace is easier to understand.
+- [x] Add a working department-creation form with school-scoped persistence and audit logging.
+- [x] Add tests and responsive visual validation for the reorganized modules and department entry.
+
+- [x] Move fee balance correction into FeesPanel, remove stale finance-management wiring from other screens, and verify every finance action renders in Fees exactly once.
+- [x] Render AcademicWorkflowEntry from AcademicsPanel, remove duplicate announcement-publishing UI, and complete remaining module-first ownership cleanup.
+- [x] Add focused regression coverage for reorganized module ownership and role visibility, then rerun desktop/mobile visual validation.

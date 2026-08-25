@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments } from "../drizzle/schema";
+import { departments, schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -14,6 +14,7 @@ vi.mock("./storage", () => ({
 }));
 
 import { appRouter } from "./routers";
+import { writeAuditLog } from "./db";
 
 function fakeDb(rows: Map<unknown, unknown[]>) {
   const query = (table?: unknown): any => ({
@@ -57,6 +58,14 @@ describe("record-management procedures", () => {
     const caller = appRouter.createCaller(context("super_admin"));
     await expect(caller.school.setup.uploadLogo({ fileName: "logo.png", mimeType: "image/png", data: Buffer.alloc(40, 65).toString("base64") })).rejects.toThrow("does not match its image type");
     await expect(appRouter.createCaller(context("parent")).school.setup.uploadLogo({ fileName: "logo.png", mimeType: "image/png", data: Buffer.alloc(40, 65).toString("base64") })).rejects.toThrow();
+  });
+
+  it("creates a school-scoped department with normalized code and an audit event, while blocking portal users", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [departments, []]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.academics.createDepartment({ name: "Sciences", code: "sci" })).resolves.toEqual({ success: true });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ schoolId: 1, action: "department.created", entityType: "department", metadata: { name: "Sciences", code: "SCI" } }));
+    await expect(appRouter.createCaller(context("parent")).school.academics.createDepartment({ name: "Arts", code: "art" })).rejects.toThrow();
   });
 
   it("allows finance staff to create a learner fee account for a matching class structure", async () => {
