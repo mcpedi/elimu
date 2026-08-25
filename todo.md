@@ -21,3 +21,4 @@
 - [x] Add administrator controls to correct fee-account balances through an auditable, safe adjustment workflow rather than silent direct edits.
 - [x] Add accessible administrator interface controls for these record-management workflows, including confirmations for destructive actions.
 - [x] Add tests and validation for the new editing, removal, assignment, capacity, and fee-adjustment controls.
+- [x] Add a protected fee-account creation workflow for selecting a learner and fee structure, entering amount due and due date, and saving the account with audit logging.

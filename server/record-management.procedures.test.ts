@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { academicYears, schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments } from "../drizzle/schema";
+import { schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -39,6 +39,12 @@ function context(role: "super_admin" | "parent"): TrpcContext {
 const school = { id: 1, name: "Test School" };
 
 describe("record-management procedures", () => {
+  it("allows finance staff to create a learner fee account for a matching class structure", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, currentClassId: 4 }]], [feeStructures, [{ id: 21, classId: 4 }]], [studentFeeAccounts, []]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.finance.createAccount({ studentId: 11, feeStructureId: 21, amountDue: 18500, dueDate: "2026-09-30" })).resolves.toMatchObject({ success: true });
+  });
+
   it("blocks portal users from all protected record-management mutations", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]]]));
     const caller = appRouter.createCaller(context("parent"));

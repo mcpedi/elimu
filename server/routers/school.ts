@@ -625,6 +625,11 @@ export const schoolRouter = router({
   }),
 
   finance: router({
+    structures: protectedProcedure.query(async ({ ctx }) => {
+      requireRole(ctx.user, financeRoles);
+      const { db, school } = await getOperatingSchool();
+      return db.select({ id: feeStructures.id, name: feeStructures.name, amount: feeStructures.amount, classId: feeStructures.classId, academicYearId: feeStructures.academicYearId, termId: feeStructures.termId, dueDate: feeStructures.dueDate }).from(feeStructures).where(eq(feeStructures.schoolId, school.id)).orderBy(desc(feeStructures.createdAt)).limit(200);
+    }),
     createFeeStructure: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), name: z.string().min(2).max(120), amount: z.number().positive().max(10_000_000), dueDate: dateSchema.optional() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, financeRoles);
       const { db, school } = await getOperatingSchool();
@@ -634,6 +639,20 @@ export const schoolRouter = router({
       if (structure && classStudents.length) await db.insert(studentFeeAccounts).values(classStudents.map(student => ({ studentId: student.id, feeStructureId: structure.id, amountDue: String(input.amount), dueDate: input.dueDate ? toDate(input.dueDate) : undefined })));
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "fee_structure.created", entityType: "feeStructure", entityId: structure?.id, metadata: { classId: input.classId, amount: input.amount } });
       return { feeStructureId: structure?.id, accountsCreated: classStudents.length };
+    }),
+    createAccount: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), feeStructureId: z.number().int().positive(), amountDue: z.number().positive().max(10_000_000), dueDate: dateSchema.optional() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, financeRoles);
+      const { db, school } = await getOperatingSchool();
+      const [student] = await db.select({ id: students.id, currentClassId: students.currentClassId }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      const [structure] = await db.select({ id: feeStructures.id, classId: feeStructures.classId }).from(feeStructures).where(and(eq(feeStructures.id, input.feeStructureId), eq(feeStructures.schoolId, school.id))).limit(1);
+      if (!student || !structure) throw new TRPCError({ code: "NOT_FOUND", message: "Learner or fee structure not found." });
+      if (!student.currentClassId || student.currentClassId !== structure.classId) throw new TRPCError({ code: "BAD_REQUEST", message: "The fee structure must belong to the learner's current class." });
+      const [existing] = await db.select({ id: studentFeeAccounts.id }).from(studentFeeAccounts).where(and(eq(studentFeeAccounts.studentId, input.studentId), eq(studentFeeAccounts.feeStructureId, input.feeStructureId))).limit(1);
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "This learner already has an account for the selected fee structure. Use the balance correction workflow instead." });
+      await db.insert(studentFeeAccounts).values({ studentId: input.studentId, feeStructureId: input.feeStructureId, amountDue: String(input.amountDue), dueDate: input.dueDate ? toDate(input.dueDate) : undefined, status: "unpaid" });
+      const [account] = await db.select({ id: studentFeeAccounts.id }).from(studentFeeAccounts).where(and(eq(studentFeeAccounts.studentId, input.studentId), eq(studentFeeAccounts.feeStructureId, input.feeStructureId))).orderBy(desc(studentFeeAccounts.id)).limit(1);
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "fee_account.created", entityType: "studentFeeAccount", entityId: account?.id, metadata: { studentId: input.studentId, feeStructureId: input.feeStructureId, amountDue: input.amountDue, dueDate: input.dueDate } });
+      return { success: true, accountId: account?.id };
     }),
     recordPayment: protectedProcedure.input(z.object({ studentFeeAccountId: z.number().int().positive(), amount: z.number().positive().max(10_000_000), method: z.enum(["mpesa", "bank", "cash", "other"]), reference: z.string().max(100).optional(), payerName: z.string().max(160).optional(), paymentDate: dateSchema })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, financeRoles);
