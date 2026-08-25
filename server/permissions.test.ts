@@ -34,4 +34,12 @@ describe("school role authorization", () => {
     expect(() => requireRole(parent, ["super_admin", "principal"])).toThrow(TRPCError);
     expect(() => requireRole(principal, ["super_admin", "principal"])).not.toThrow();
   });
+
+  it("restricts school-record management and deletion to leadership roles", () => {
+    const deputy = { ...principal, id: 3, role: "deputy_principal" as const };
+    const teacher = { ...principal, id: 4, role: "teacher" as const };
+    expect(() => requireRole(deputy, ["super_admin", "principal", "deputy_principal"])).not.toThrow();
+    expect(() => requireRole(teacher, ["super_admin", "principal", "deputy_principal"])).toThrow(TRPCError);
+    expect(() => requireRole(deputy, ["super_admin", "principal"])).toThrow(TRPCError);
+  });
 });

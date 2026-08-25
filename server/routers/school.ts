@@ -34,7 +34,8 @@ import {
 import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks } from "../academics";
 import { summarizeAttendance } from "../attendance";
 import { getDb, writeAuditLog } from "../db";
-import { applyPayment } from "../fee-calculations";
+import { adjustFeeDue, applyPayment } from "../fee-calculations";
+import { assertEligibleClassTeacher, assertRecordRemovable, validateClassCapacity, validateNamedRecordUpdate } from "../management-rules";
 import { academicRoles, administrativeRoles, financeRoles, requireRole } from "../permissions";
 import { storagePut } from "../storage";
 import { hasTimetableConflict } from "../timetable";
@@ -397,6 +398,38 @@ export const schoolRouter = router({
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "teacher.department_updated", entityType: "teacher", entityId: input.teacherId, metadata: { departmentId: input.departmentId } });
       return { success: true };
     }),
+    update: protectedProcedure.input(z.object({ teacherId: z.number().int().positive(), employeeNo: z.string().min(2).max(40), firstName: z.string().min(1).max(80), lastName: z.string().min(1).max(80), phone: z.string().max(20).nullable().optional(), email: z.string().email().nullable().optional(), employmentStatus: z.enum(["active", "on_leave", "inactive"]) })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      validateNamedRecordUpdate("teacher", { employeeNo: input.employeeNo, firstName: input.firstName, lastName: input.lastName });
+      const { db, school } = await getOperatingSchool();
+      const [teacher] = await db.select({ id: teachers.id }).from(teachers).where(and(eq(teachers.id, input.teacherId), eq(teachers.schoolId, school.id))).limit(1);
+      if (!teacher) throw new TRPCError({ code: "NOT_FOUND", message: "Teacher not found." });
+      await db.update(teachers).set({ employeeNo: input.employeeNo, firstName: input.firstName, lastName: input.lastName, phone: input.phone, email: input.email, employmentStatus: input.employmentStatus }).where(eq(teachers.id, input.teacherId));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "teacher.updated", entityType: "teacher", entityId: input.teacherId, metadata: { employeeNo: input.employeeNo, employmentStatus: input.employmentStatus } });
+      return { success: true };
+    }),
+    remove: protectedProcedure.input(z.object({ teacherId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [teacher] = await db.select({ id: teachers.id, firstName: teachers.firstName, lastName: teachers.lastName }).from(teachers).where(and(eq(teachers.id, input.teacherId), eq(teachers.schoolId, school.id))).limit(1);
+      if (!teacher) throw new TRPCError({ code: "NOT_FOUND", message: "Teacher not found." });
+      const [classLinks, allocationLinks, timetableLinks, attendanceLinks, markLinks, assignmentLinks] = await Promise.all([
+        db.select({ id: schoolClasses.id }).from(schoolClasses).where(eq(schoolClasses.classTeacherId, input.teacherId)).limit(1),
+        db.select({ id: teacherAssignments.id }).from(teacherAssignments).where(eq(teacherAssignments.teacherId, input.teacherId)).limit(1),
+        db.select({ id: timetableSlots.id }).from(timetableSlots).where(eq(timetableSlots.teacherId, input.teacherId)).limit(1),
+        db.select({ id: teacherAttendance.id }).from(teacherAttendance).where(eq(teacherAttendance.teacherId, input.teacherId)).limit(1),
+        db.select({ id: marks.id }).from(marks).where(eq(marks.teacherId, input.teacherId)).limit(1),
+        db.select({ id: assignments.id }).from(assignments).where(eq(assignments.teacherId, input.teacherId)).limit(1),
+      ]);
+      try {
+        assertRecordRemovable("teacher", { classes: Boolean(classLinks.length), allocations: Boolean(allocationLinks.length), timetable: Boolean(timetableLinks.length), attendance: Boolean(attendanceLinks.length), marks: Boolean(markLinks.length), assignments: Boolean(assignmentLinks.length) });
+      } catch (error) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: error instanceof Error ? error.message : "Teacher has linked operational data." });
+      }
+      await db.delete(teachers).where(eq(teachers.id, input.teacherId));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "teacher.removed", entityType: "teacher", entityId: input.teacherId, metadata: { name: `${teacher.firstName} ${teacher.lastName}` } });
+      return { success: true };
+    }),
   }),
 
   academics: router({
@@ -446,11 +479,56 @@ export const schoolRouter = router({
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "class.created", entityType: "class", metadata: input });
       return { success: true };
     }),
+    updateClass: protectedProcedure.input(z.object({ classId: z.number().int().positive(), capacity: z.number().int().min(1).max(120), classTeacherId: z.number().int().positive().nullable() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      validateClassCapacity(input.capacity);
+      const { db, school } = await getOperatingSchool();
+      const [schoolClass] = await db.select({ id: schoolClasses.id }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!schoolClass) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found." });
+      if (input.classTeacherId) {
+        const [teacher] = await db.select({ id: teachers.id }).from(teachers).where(and(eq(teachers.id, input.classTeacherId), eq(teachers.schoolId, school.id), eq(teachers.employmentStatus, "active"))).limit(1);
+        try { assertEligibleClassTeacher(Boolean(teacher)); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid class teacher." }); }
+      }
+      await db.update(schoolClasses).set({ capacity: input.capacity, classTeacherId: input.classTeacherId }).where(eq(schoolClasses.id, input.classId));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "class.updated", entityType: "class", entityId: input.classId, metadata: { capacity: input.capacity, classTeacherId: input.classTeacherId } });
+      return { success: true };
+    }),
     createSubject: protectedProcedure.input(z.object({ code: z.string().min(2).max(20).transform(value => value.toUpperCase()), name: z.string().min(2).max(100), category: z.enum(["compulsory", "optional"]).default("compulsory") })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
       const { db, school } = await getOperatingSchool();
       await db.insert(subjects).values({ schoolId: school.id, ...input });
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "subject.created", entityType: "subject", metadata: input });
+      return { success: true };
+    }),
+    updateSubject: protectedProcedure.input(z.object({ subjectId: z.number().int().positive(), code: z.string().min(2).max(20).transform(value => value.toUpperCase()), name: z.string().min(2).max(100), category: z.enum(["compulsory", "optional"]), isActive: z.boolean() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      validateNamedRecordUpdate("subject", { code: input.code, name: input.name });
+      const { db, school } = await getOperatingSchool();
+      const [subject] = await db.select({ id: subjects.id }).from(subjects).where(and(eq(subjects.id, input.subjectId), eq(subjects.schoolId, school.id))).limit(1);
+      if (!subject) throw new TRPCError({ code: "NOT_FOUND", message: "Subject not found." });
+      await db.update(subjects).set({ code: input.code, name: input.name, category: input.category, isActive: input.isActive }).where(eq(subjects.id, input.subjectId));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "subject.updated", entityType: "subject", entityId: input.subjectId, metadata: { code: input.code, name: input.name, category: input.category, isActive: input.isActive } });
+      return { success: true };
+    }),
+    removeSubject: protectedProcedure.input(z.object({ subjectId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [subject] = await db.select({ id: subjects.id, name: subjects.name }).from(subjects).where(and(eq(subjects.id, input.subjectId), eq(subjects.schoolId, school.id))).limit(1);
+      if (!subject) throw new TRPCError({ code: "NOT_FOUND", message: "Subject not found." });
+      const [studentLinks, teacherLinks, markLinks, timetableLinks, assignmentLinks] = await Promise.all([
+        db.select({ id: studentSubjects.id }).from(studentSubjects).where(eq(studentSubjects.subjectId, input.subjectId)).limit(1),
+        db.select({ id: teacherAssignments.id }).from(teacherAssignments).where(eq(teacherAssignments.subjectId, input.subjectId)).limit(1),
+        db.select({ id: marks.id }).from(marks).where(eq(marks.subjectId, input.subjectId)).limit(1),
+        db.select({ id: timetableSlots.id }).from(timetableSlots).where(eq(timetableSlots.subjectId, input.subjectId)).limit(1),
+        db.select({ id: assignments.id }).from(assignments).where(eq(assignments.subjectId, input.subjectId)).limit(1),
+      ]);
+      try {
+        assertRecordRemovable("subject", { learnerAllocations: Boolean(studentLinks.length), teacherAssignments: Boolean(teacherLinks.length), marks: Boolean(markLinks.length), timetables: Boolean(timetableLinks.length), assignments: Boolean(assignmentLinks.length) });
+      } catch (error) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: error instanceof Error ? error.message : "Subject has linked operational data." });
+      }
+      await db.delete(subjects).where(eq(subjects.id, input.subjectId));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "subject.removed", entityType: "subject", entityId: input.subjectId, metadata: { name: subject.name } });
       return { success: true };
     }),
     assignTeacher: protectedProcedure.input(z.object({ teacherId: z.number().int().positive(), subjectId: z.number().int().positive(), classId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
@@ -570,6 +648,22 @@ export const schoolRouter = router({
       if (payment) await db.insert(receipts).values({ paymentId: payment.id, receiptNo, issuedByUserId: ctx.user.id });
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "payment.recorded", entityType: "payment", entityId: payment?.id, metadata: { receiptNo, method: input.method, amount: input.amount } });
       return { receiptNo, balance: paymentUpdate.balance };
+    }),
+    adjustAccount: protectedProcedure.input(z.object({ studentFeeAccountId: z.number().int().positive(), amountDue: z.number().min(0).max(10_000_000), reason: z.string().min(5).max(500) })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "bursar"]);
+      const { db, school } = await getOperatingSchool();
+      const [account] = await db.select({ id: studentFeeAccounts.id, amountDue: studentFeeAccounts.amountDue, amountPaid: studentFeeAccounts.amountPaid }).from(studentFeeAccounts).innerJoin(students, eq(studentFeeAccounts.studentId, students.id)).where(and(eq(studentFeeAccounts.id, input.studentFeeAccountId), eq(students.schoolId, school.id))).limit(1);
+      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Fee account not found." });
+      const paid = Number(account.amountPaid);
+      let adjustment: ReturnType<typeof adjustFeeDue>;
+      try {
+        adjustment = adjustFeeDue(paid, input.amountDue);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? `${error.message} Issue a documented refund or credit separately.` : "Invalid fee adjustment." });
+      }
+      await db.update(studentFeeAccounts).set({ amountDue: String(input.amountDue), status: adjustment.status }).where(eq(studentFeeAccounts.id, account.id));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "fee_account.adjusted", entityType: "studentFeeAccount", entityId: account.id, metadata: { previousAmountDue: Number(account.amountDue), newAmountDue: input.amountDue, amountPaid: paid, reason: input.reason } });
+      return { success: true, balance: adjustment.balance };
     }),
     mine: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user.role !== "parent" && ctx.user.role !== "student") requireRole(ctx.user, financeRoles);

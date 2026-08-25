@@ -16,3 +16,8 @@
 - [x] Verify the application through type checks, tests, desktop/mobile visual review, and a final runtime inspection.
 - [x] Prepare a completion checkpoint and delivery summary with configuration and deployment guidance.
 - [x] Reset each data-entry form after a successful save so users can immediately add the next subject, teacher, learner, payment, record, or other operational item without manual clearing.
+- [x] Add administrator controls to edit and remove subjects and teacher records, with audit logging and safeguards for dependent data.
+- [x] Add administrator controls to update class capacity and assign or change a class teacher.
+- [x] Add administrator controls to correct fee-account balances through an auditable, safe adjustment workflow rather than silent direct edits.
+- [x] Add accessible administrator interface controls for these record-management workflows, including confirmations for destructive actions.
+- [x] Add tests and validation for the new editing, removal, assignment, capacity, and fee-adjustment controls.

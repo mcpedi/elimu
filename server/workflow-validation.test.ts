@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { summarizeAttendance } from "./attendance";
-import { applyPayment } from "./fee-calculations";
+import { adjustFeeDue, applyPayment } from "./fee-calculations";
 
 describe("finance and attendance workflow validation", () => {
   it("updates paid amount, balance, and status after a valid fee payment", () => {
@@ -10,6 +10,11 @@ describe("finance and attendance workflow validation", () => {
 
   it("rejects zero or negative payment amounts", () => {
     expect(() => applyPayment(10_000, 0, 0)).toThrow("payment amount must be positive");
+  });
+
+  it("keeps recorded payments intact when correcting a fee amount", () => {
+    expect(adjustFeeDue(2_500, 10_000)).toEqual({ balance: 7_500, status: "partial" });
+    expect(() => adjustFeeDue(2_500, 2_000)).toThrow("cannot be lower than recorded payments");
   });
 
   it("calculates attendance rate and flags a learner with repeated absences", () => {
