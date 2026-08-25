@@ -15,3 +15,4 @@
 - [x] Add server-side tests for key calculations, authorization boundaries, and validation rules.
 - [x] Verify the application through type checks, tests, desktop/mobile visual review, and a final runtime inspection.
 - [x] Prepare a completion checkpoint and delivery summary with configuration and deployment guidance.
+- [x] Reset each data-entry form after a successful save so users can immediately add the next subject, teacher, learner, payment, record, or other operational item without manual clearing.
