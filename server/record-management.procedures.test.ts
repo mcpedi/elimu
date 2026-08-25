@@ -9,6 +9,10 @@ vi.mock("./db", () => ({
   writeAuditLog: vi.fn(async () => undefined),
 }));
 
+vi.mock("./storage", () => ({
+  storagePut: vi.fn(async () => ({ key: "schools/1/branding/logo_123.png", url: "/manus-storage/schools/1/branding/logo_123.png" })),
+}));
+
 import { appRouter } from "./routers";
 
 function fakeDb(rows: Map<unknown, unknown[]>) {
@@ -40,6 +44,21 @@ function context(role: "super_admin" | "parent"): TrpcContext {
 const school = { id: 1, name: "Test School" };
 
 describe("record-management procedures", () => {
+  it("accepts a valid school logo for an authorised administrator", async () => {
+    const png = Buffer.alloc(40);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    dbState.current = fakeDb(new Map([[schools, [school]]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.setup.uploadLogo({ fileName: "school-logo.png", mimeType: "image/png", data: png.toString("base64") })).resolves.toMatchObject({ success: true, logoUrl: "/manus-storage/schools/1/branding/logo_123.png" });
+  });
+
+  it("rejects invalid logo signatures and non-administrator upload attempts", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.setup.uploadLogo({ fileName: "logo.png", mimeType: "image/png", data: Buffer.alloc(40, 65).toString("base64") })).rejects.toThrow("does not match its image type");
+    await expect(appRouter.createCaller(context("parent")).school.setup.uploadLogo({ fileName: "logo.png", mimeType: "image/png", data: Buffer.alloc(40, 65).toString("base64") })).rejects.toThrow();
+  });
+
   it("allows finance staff to create a learner fee account for a matching class structure", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, currentClassId: 4 }]], [feeStructures, [{ id: 21, classId: 4 }]], [studentFeeAccounts, []]]));
     const caller = appRouter.createCaller(context("super_admin"));

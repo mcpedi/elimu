@@ -30,3 +30,6 @@
 - [x] Add a focused failure-path test for payment-receipt retrieval when the payment is missing or belongs to a different learner.
 - [x] Add a payment-receipt test that rejects when the payment ID does not exist for the selected learner.
 - [x] Add a payment-receipt test that rejects when a real payment belongs to a different learner than the supplied student ID.
+- [x] Add a protected school-logo upload workflow with image validation and object-storage persistence outside the database.
+- [x] Display the saved logo in school settings and in printable statement and receipt headers.
+- [x] Add secure upload, logo-display, document-rendering, and regression tests.

@@ -172,14 +172,31 @@ export const schoolRouter = router({
         await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school?.id, action: "school.created", entityType: "school", entityId: school?.id, metadata: { code: input.code } });
         return school;
       }),
-    updateSchool: protectedProcedure
-      .input(z.object({ name: z.string().min(3).max(180).optional(), phone: z.string().max(20).nullable().optional(), email: z.string().email().nullable().optional(), county: z.string().max(80).nullable().optional(), admissionPrefix: z.string().min(1).max(16).optional(), gradeScale: z.array(z.object({ min: z.number(), max: z.number(), grade: z.string().min(1).max(4), points: z.number().int().min(0).max(20), remark: z.string().max(120).optional() })).optional() }))
+      updateSchool: protectedProcedure
+      .input(z.object({ name: z.string().min(3).max(180).optional(), phone: z.string().max(20).nullable().optional(), email: z.string().email().nullable().optional(), county: z.string().max(80).nullable().optional(), admissionPrefix: z.string().min(1).max(16).optional(), gradeScale: z.array(z.object({ min: z.number(), max: z.number(), grade: z.string().min(0).max(4), points: z.number().int().min(0).max(20), remark: z.string().max(120).optional() })).optional() }))
       .mutation(async ({ ctx, input }) => {
         requireRole(ctx.user, ["super_admin", "principal"]);
         const { db, school } = await getOperatingSchool();
         await db.update(schools).set(input).where(eq(schools.id, school.id));
         await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "school.updated", entityType: "school", entityId: school.id });
         return { success: true };
+      }),
+      uploadLogo: protectedProcedure.input(z.object({ fileName: z.string().min(1).max(120), mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]), data: z.string().min(32).max(4_000_000) })).mutation(async ({ ctx, input }) => {
+        requireRole(ctx.user, ["super_admin", "principal"]);
+        const { db, school } = await getOperatingSchool();
+        const bytes = Buffer.from(input.data, "base64");
+        if (!bytes.length || bytes.length > 2_000_000) throw new TRPCError({ code: "BAD_REQUEST", message: "Logo must be a valid image no larger than 2 MB." });
+        const signatures: Record<string, (data: Buffer) => boolean> = {
+          "image/png": data => data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+          "image/jpeg": data => data.subarray(0, 2).equals(Buffer.from([255, 216])),
+          "image/webp": data => data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP",
+        };
+        if (!signatures[input.mimeType](bytes)) throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded file does not match its image type." });
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "school-logo";
+        const { key, url } = await storagePut(`schools/${school.id}/branding/${safeName}`, bytes, input.mimeType);
+        await db.update(schools).set({ logoKey: key }).where(eq(schools.id, school.id));
+        await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "school.logo_uploaded", entityType: "school", entityId: school.id, metadata: { mimeType: input.mimeType, fileName: safeName, size: bytes.length } });
+        return { success: true, logoKey: key, logoUrl: url };
       }),
   }),
 
@@ -443,7 +460,7 @@ export const schoolRouter = router({
         db.select().from(departments).where(eq(departments.schoolId, school.id)).orderBy(asc(departments.name)),
       ]);
       const termRows = years.length ? await db.select().from(terms).where(inArray(terms.academicYearId, years.map(year => year.id))).orderBy(asc(terms.startsOn)) : [];
-      return { school, academicYears: years, terms: termRows, classes: classRows, subjects: subjectRows, departments: departmentRows };
+      return { school: { ...school, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, academicYears: years, terms: termRows, classes: classRows, subjects: subjectRows, departments: departmentRows };
     }),
     createAcademicYear: protectedProcedure.input(z.object({ name: z.string().regex(/^20\d{2}$/), startsOn: dateSchema, endsOn: dateSchema, isActive: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
@@ -706,14 +723,14 @@ export const schoolRouter = router({
         db.select({ feeName: feeStructures.name, due: studentFeeAccounts.amountDue, paid: studentFeeAccounts.amountPaid, status: studentFeeAccounts.status }).from(studentFeeAccounts).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(eq(studentFeeAccounts.studentId, input.studentId)),
         db.select({ id: payments.id, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, paymentDate: payments.paymentDate, reference: payments.reference, payerName: payments.payerName }).from(payments).where(eq(payments.studentId, input.studentId)).orderBy(desc(payments.paymentDate)),
       ]);
-      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address }, student, accounts, payments: paymentRows, balance: accounts.reduce((sum, account) => sum + Number(account.due) - Number(account.paid), 0) };
+      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, student, accounts, payments: paymentRows, balance: accounts.reduce((sum, account) => sum + Number(account.due) - Number(account.paid), 0) };
     }),
     paymentReceipt: protectedProcedure.input(z.object({ paymentId: z.number().int().positive(), studentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
       const { db, school } = await getOperatingSchool();
       const [receipt] = await db.select({ paymentId: payments.id, studentId: payments.studentId, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, reference: payments.reference, payerName: payments.payerName, paymentDate: payments.paymentDate, providerReference: payments.providerReference, feeName: feeStructures.name, issuedAt: receipts.issuedAt }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).innerJoin(studentFeeAccounts, eq(payments.studentFeeAccountId, studentFeeAccounts.id)).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).leftJoin(receipts, eq(receipts.paymentId, payments.id)).where(and(eq(payments.id, input.paymentId), eq(payments.studentId, input.studentId), eq(students.schoolId, school.id))).limit(1);
       if (!receipt || receipt.studentId !== input.studentId) throw new TRPCError({ code: "NOT_FOUND", message: "Payment receipt not found for this learner." });
-      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address }, receipt };
+      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, receipt };
     }),
     recordDocument: protectedProcedure.input(z.object({ documentType: z.enum(["statement", "receipt"]), studentId: z.number().int().positive(), paymentId: z.number().int().positive().optional(), format: z.enum(["pdf", "excel"]).default("pdf") })).mutation(async ({ ctx, input }) => {
       await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
