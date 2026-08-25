@@ -22,3 +22,11 @@
 - [x] Add accessible administrator interface controls for these record-management workflows, including confirmations for destructive actions.
 - [x] Add tests and validation for the new editing, removal, assignment, capacity, and fee-adjustment controls.
 - [x] Add a protected fee-account creation workflow for selecting a learner and fee structure, entering amount due and due date, and saving the account with audit logging.
+- [x] Add secure printable learner account statements with balances, fee lines, payment history, and download/print actions.
+- [x] Add secure printable payment receipts with learner, amount, payment method, reference, receipt number, and download/print actions.
+- [x] Audit generated statement and receipt exports, add tests, and validate the finance document workflow.
+- [x] Prevent statement or receipt audit/export records when the printable document window cannot be opened.
+- [x] Add focused retrieval tests for secure learner statements and payment receipts, including failure-path validation.
+- [x] Add a focused failure-path test for payment-receipt retrieval when the payment is missing or belongs to a different learner.
+- [x] Add a payment-receipt test that rejects when the payment ID does not exist for the selected learner.
+- [x] Add a payment-receipt test that rejects when a real payment belongs to a different learner than the supplied student ID.

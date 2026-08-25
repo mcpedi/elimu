@@ -692,14 +692,40 @@ export const schoolRouter = router({
       const condition = linked.length ? inArray(studentFeeAccounts.studentId, linked) : eq(students.schoolId, school.id);
       return db.select({ id: studentFeeAccounts.id, studentId: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo, due: studentFeeAccounts.amountDue, paid: studentFeeAccounts.amountPaid, status: studentFeeAccounts.status, feeName: feeStructures.name }).from(studentFeeAccounts).innerJoin(students, eq(studentFeeAccounts.studentId, students.id)).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(condition).orderBy(asc(students.lastName));
     }),
+    payments: protectedProcedure.input(z.object({ studentId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, financeRoles);
+      const { db, school } = await getOperatingSchool();
+      return db.select({ id: payments.id, studentId: payments.studentId, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, reference: payments.reference, payerName: payments.payerName, paymentDate: payments.paymentDate, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo, feeName: feeStructures.name }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).innerJoin(studentFeeAccounts, eq(payments.studentFeeAccountId, studentFeeAccounts.id)).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(and(eq(students.schoolId, school.id), ...(input?.studentId ? [eq(payments.studentId, input.studentId)] : []))).orderBy(desc(payments.paymentDate), desc(payments.id)).limit(200);
+    }),
     studentStatement: protectedProcedure.input(z.object({ studentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
-      const { db } = await getOperatingSchool();
+      const { db, school } = await getOperatingSchool();
+      const [student] = await db.select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, lastName: students.lastName }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Learner not found." });
       const [accounts, paymentRows] = await Promise.all([
         db.select({ feeName: feeStructures.name, due: studentFeeAccounts.amountDue, paid: studentFeeAccounts.amountPaid, status: studentFeeAccounts.status }).from(studentFeeAccounts).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(eq(studentFeeAccounts.studentId, input.studentId)),
-        db.select({ receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, paymentDate: payments.paymentDate, reference: payments.reference }).from(payments).where(eq(payments.studentId, input.studentId)).orderBy(desc(payments.paymentDate)),
+        db.select({ id: payments.id, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, paymentDate: payments.paymentDate, reference: payments.reference, payerName: payments.payerName }).from(payments).where(eq(payments.studentId, input.studentId)).orderBy(desc(payments.paymentDate)),
       ]);
-      return { accounts, payments: paymentRows, balance: accounts.reduce((sum, account) => sum + Number(account.due) - Number(account.paid), 0) };
+      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address }, student, accounts, payments: paymentRows, balance: accounts.reduce((sum, account) => sum + Number(account.due) - Number(account.paid), 0) };
+    }),
+    paymentReceipt: protectedProcedure.input(z.object({ paymentId: z.number().int().positive(), studentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
+      const { db, school } = await getOperatingSchool();
+      const [receipt] = await db.select({ paymentId: payments.id, studentId: payments.studentId, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, reference: payments.reference, payerName: payments.payerName, paymentDate: payments.paymentDate, providerReference: payments.providerReference, feeName: feeStructures.name, issuedAt: receipts.issuedAt }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).innerJoin(studentFeeAccounts, eq(payments.studentFeeAccountId, studentFeeAccounts.id)).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).leftJoin(receipts, eq(receipts.paymentId, payments.id)).where(and(eq(payments.id, input.paymentId), eq(payments.studentId, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!receipt || receipt.studentId !== input.studentId) throw new TRPCError({ code: "NOT_FOUND", message: "Payment receipt not found for this learner." });
+      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address }, receipt };
+    }),
+    recordDocument: protectedProcedure.input(z.object({ documentType: z.enum(["statement", "receipt"]), studentId: z.number().int().positive(), paymentId: z.number().int().positive().optional(), format: z.enum(["pdf", "excel"]).default("pdf") })).mutation(async ({ ctx, input }) => {
+      await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
+      const { db, school } = await getOperatingSchool();
+      if (input.documentType === "receipt" && !input.paymentId) throw new TRPCError({ code: "BAD_REQUEST", message: "A payment is required for a receipt." });
+      if (input.paymentId) {
+        const [payment] = await db.select({ id: payments.id }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).where(and(eq(payments.id, input.paymentId), eq(payments.studentId, input.studentId), eq(students.schoolId, school.id))).limit(1);
+        if (!payment) throw new TRPCError({ code: "NOT_FOUND", message: "Payment not found for this learner." });
+      }
+      await db.insert(reportExports).values({ schoolId: school.id, userId: ctx.user.id, reportType: input.documentType === "statement" ? "learner_statement" : "payment_receipt", format: input.format, filters: { studentId: String(input.studentId), ...(input.paymentId ? { paymentId: String(input.paymentId) } : {}) } });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: `finance.${input.documentType}_generated`, entityType: input.documentType === "statement" ? "studentFeeAccount" : "payment", entityId: input.paymentId ?? input.studentId, metadata: { studentId: input.studentId, paymentId: input.paymentId, format: input.format } });
+      return { success: true };
     }),
     collectionSummary: protectedProcedure.query(async ({ ctx }) => {
       requireRole(ctx.user, financeRoles);

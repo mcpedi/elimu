@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures } from "../drizzle/schema";
+import { schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -19,6 +19,7 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
     where: () => query(table),
     orderBy: () => query(table),
     limit: async () => rows.get(table) ?? [],
+    then: (resolve: any, reject?: any) => Promise.resolve(rows.get(table) ?? []).then(resolve, reject),
   });
   return {
     select: () => query(),
@@ -43,6 +44,31 @@ describe("record-management procedures", () => {
     dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, currentClassId: 4 }]], [feeStructures, [{ id: 21, classId: 4 }]], [studentFeeAccounts, []]]));
     const caller = appRouter.createCaller(context("super_admin"));
     await expect(caller.school.finance.createAccount({ studentId: 11, feeStructureId: 21, amountDue: 18500, dueDate: "2026-09-30" })).resolves.toMatchObject({ success: true });
+  });
+
+  it("allows a leadership user to generate audited statements and receipts", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, currentClassId: 4 }]], [payments, [{ id: 31 }]]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.finance.recordDocument({ documentType: "statement", studentId: 11, format: "pdf" })).resolves.toEqual({ success: true });
+    await expect(caller.school.finance.recordDocument({ documentType: "receipt", studentId: 11, paymentId: 31, format: "pdf" })).resolves.toEqual({ success: true });
+  });
+
+  it("returns learner-scoped statement and receipt data and blocks unlinked parents", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, admissionNo: "ADM-001", firstName: "Amina", lastName: "Otieno" }]], [studentFeeAccounts, [{ feeName: "Term 1", due: "15000", paid: "5000", status: "partial" }]], [feeStructures, []], [payments, [{ id: 31, studentId: 11, receiptNo: "RCT-001", amount: "5000", method: "mpesa", paymentDate: new Date("2026-09-01"), reference: "MPESA-1", payerName: "Parent" }]]]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    const statement = await caller.school.finance.studentStatement({ studentId: 11 });
+    expect(statement.student.admissionNo).toBe("ADM-001");
+    expect(statement.balance).toBe(10000);
+    const receipt = await caller.school.finance.paymentReceipt({ studentId: 11, paymentId: 31 });
+    expect(receipt.receipt.receiptNo).toBe("RCT-001");
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11 }]], [payments, []]]));
+    await expect(caller.school.finance.paymentReceipt({ studentId: 11, paymentId: 31 })).rejects.toThrow("Payment receipt not found");
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11 }]], [payments, [{ id: 31, studentId: 22, receiptNo: "RCT-OTHER" }]]]));
+    await expect(caller.school.finance.paymentReceipt({ studentId: 11, paymentId: 31 })).rejects.toThrow("Payment receipt not found");
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11 }]] ]));
+    await expect(appRouter.createCaller(context("parent")).school.finance.paymentReceipt({ studentId: 11, paymentId: 31 })).rejects.toThrow("linked to your account");
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, []]]));
+    await expect(appRouter.createCaller(context("parent")).school.finance.studentStatement({ studentId: 11 })).rejects.toThrow("linked to your account");
   });
 
   it("blocks portal users from all protected record-management mutations", async () => {
