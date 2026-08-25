@@ -154,6 +154,22 @@ export const students = mysqlTable("students", {
   uniqueIndex("student_user_unique").on(table.userId),
 ]);
 
+export const studentCredentials = mysqlTable("studentCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  studentId: int("studentId").notNull().references(() => students.id),
+  passwordHash: varchar("passwordHash", { length: 255 }),
+  activationCodeHash: varchar("activationCodeHash", { length: 255 }),
+  activationCodeExpiresAt: timestamp("activationCodeExpiresAt"),
+  failedAttempts: int("failedAttempts").notNull().default(0),
+  lockedUntil: timestamp("lockedUntil"),
+  lastLoginAt: timestamp("lastLoginAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [uniqueIndex("student_credentials_student_unique").on(table.studentId)]);
+
+export type StudentCredential = typeof studentCredentials.$inferSelect;
+export type InsertStudentCredential = typeof studentCredentials.$inferInsert;
+
 export const guardians = mysqlTable("guardians", {
   id: int("id").autoincrement().primaryKey(),
   schoolId: int("schoolId").notNull().references(() => schools.id),

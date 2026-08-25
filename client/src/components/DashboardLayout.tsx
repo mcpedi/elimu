@@ -1,5 +1,4 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { startLogin } from "@/const";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -8,6 +7,7 @@ import { Bell, ChevronDown, LogOut, Menu, Moon, School, Sun, X } from "lucide-re
 import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
+import StudentLoginCard from "@/components/StudentLoginCard";
 
 export type NavigationItem = {
   id: string;
@@ -34,19 +34,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
 
   if (loading) return <DashboardLayoutSkeleton />;
 
-  if (!user) {
-    return (
-      <main className="min-h-screen bg-[#f5f7f5] text-slate-900 grid place-items-center p-6">
-        <section className="w-full max-w-md rounded-[2rem] border border-emerald-950/10 bg-white p-8 shadow-[0_24px_80px_-32px_rgba(11,61,46,0.32)]">
-          <div className="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0d4437] text-white shadow-lg shadow-emerald-950/20"><School className="h-6 w-6" /></div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#ae7d2c]">Kenyan school operating system</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-[#103b31]">One secure place for the school day.</h1>
-          <p className="mt-4 leading-7 text-slate-600">Sign in to access the workspace that matches your role and linked school records.</p>
-          <Button onClick={() => startLogin()} size="lg" className="mt-8 w-full rounded-xl bg-[#0d4437] text-white hover:bg-[#0a352b]">Sign in securely</Button>
-        </section>
-      </main>
-    );
-  }
+  if (!user) return <StudentLoginCard />;
 
   const navigate = (id: string) => {
     onNavigate(id);

@@ -311,6 +311,13 @@ export const schoolRouter = router({
       ]);
       return { student, guardians: guardianRows, documents: documentRows, subjects: subjectRows, attendance: attendanceRows, feeAccounts: feeRows, marks: markRows };
     }),
+    results: protectedProcedure.query(async ({ ctx }) => {
+      requireRole(ctx.user, ["parent", "student"]);
+      const { db, school } = await getOperatingSchool();
+      const studentIds = await getLinkedStudentIds(ctx.user.id, ctx.user.role);
+      if (studentIds.length === 0) return [];
+      return db.select({ studentId: students.id, admissionNo: students.admissionNo, firstName: students.firstName, lastName: students.lastName, subject: subjects.name, subjectCode: subjects.code, assessment: assessments.title, assessmentDate: assessments.assessmentDate, score: marks.score, grade: marks.grade, gradePoints: marks.gradePoints }).from(marks).innerJoin(students, eq(marks.studentId, students.id)).innerJoin(subjects, eq(marks.subjectId, subjects.id)).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).where(and(eq(students.schoolId, school.id), inArray(marks.studentId, studentIds))).orderBy(desc(assessments.assessmentDate), asc(subjects.name)).limit(100);
+    }),
     linkStudentAccount: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal"]);
       const { db, school } = await getOperatingSchool();

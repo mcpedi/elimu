@@ -1,0 +1,14 @@
+import fs from "node:fs";
+
+const path = "/home/ubuntu/kenyan-school-management/client/src/pages/Home.tsx";
+let source = fs.readFileSync(path, "utf8");
+const replacement = `function PortalAcademicPanel() {
+  const results = trpc.school.students.results.useQuery();
+  return <><SectionHeading eyebrow="Academic records" title="My results" description="Only assessment marks linked to your learner account are shown here." /><Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader className="pb-3"><CardTitle className="text-base text-[#143b31] dark:text-emerald-50">Assessment results</CardTitle><CardDescription>{results.data?.length ?? 0} result record(s) available</CardDescription></CardHeader><CardContent className="p-0">{results.isLoading ? <div className="p-6"><Skeleton className="h-48" /></div> : results.data?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="border-y border-emerald-950/7 text-[10px] uppercase tracking-[0.14em] text-slate-400"><tr><th className="px-4 py-3">Learner</th><th className="px-4 py-3">Assessment</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3 text-right">Score</th><th className="px-4 py-3">Grade</th><th className="px-4 py-3">Date</th></tr></thead><tbody>{results.data.map((row, index) => <tr key={String(row.studentId) + "-" + row.assessment + "-" + row.subject + "-" + index} className="border-b border-emerald-950/6 dark:border-white/7"><td className="px-4 py-3.5"><p className="font-semibold text-[#133b30] dark:text-emerald-50">{row.firstName} {row.lastName}</p><p className="mt-0.5 font-mono text-xs text-slate-500">{row.admissionNo}</p></td><td className="px-4 py-3.5">{row.assessment}</td><td className="px-4 py-3.5"><p>{row.subject}</p><p className="font-mono text-xs text-slate-400">{row.subjectCode}</p></td><td className="px-4 py-3.5 text-right font-semibold">{row.score}</td><td className="px-4 py-3.5"><Badge className="border-0 bg-[#fbf1d8] text-[#94651f] dark:bg-amber-950/50 dark:text-amber-300">{row.grade} · {row.gradePoints} pts</Badge></td><td className="px-4 py-3.5 text-xs text-slate-500">{formatDate(row.assessmentDate)}</td></tr>)}</tbody></table></div> : <div className="p-6"><EmptyText label="No results are available yet. Ask the school office to confirm that your learner account is linked and results have been entered." /></div>}</CardContent></Card></>;
+}
+`;
+const pattern = /function PortalAcademicPanel\(\) \{[\s\S]*?\n\}\n\nfunction AttendancePanel/;
+if (!pattern.test(source)) throw new Error("PortalAcademicPanel boundary not found");
+source = source.replace(pattern, `${replacement}\nfunction AttendancePanel`);
+fs.writeFileSync(path, source);
+console.log("Learner results panel wired to the school-scoped results procedure.");

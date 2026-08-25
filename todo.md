@@ -50,3 +50,7 @@
 - [x] Move fee balance correction into FeesPanel, remove stale finance-management wiring from other screens, and verify every finance action renders in Fees exactly once.
 - [x] Render AcademicWorkflowEntry from AcademicsPanel, remove duplicate announcement-publishing UI, and complete remaining module-first ownership cleanup.
 - [x] Add focused regression coverage for reorganized module ownership and role visibility, then rerun desktop/mobile visual validation.
+
+- [x] Add secure student admission-number/password credential setup and login without weakening existing role authorization.
+- [x] Add a responsive learner login experience and protected own-results view with clear password lifecycle states.
+- [x] Add regression coverage for password hashing, login failures, school scoping, learner-only visibility, and audit events.
