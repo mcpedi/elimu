@@ -137,3 +137,9 @@
 - [x] Add a responsive Super Administrator dashboard with school inventory, user-count summaries, and privacy-safe unassigned-account monitoring.
 - [x] Add regression tests for platform authorization, correct aggregation, and denial to non-platform roles.
 - [x] Validate the protected platform procedures plus the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.
+
+- [x] Define safe platform-administrator designation and revocation rules, including audit requirements and protection against self-lockout.
+- [x] Add protected platform-administrator list, eligibility, designation, and revocation procedures restricted to designated Super Administrators.
+- [x] Build a responsive Platform administrator management interface with searchable eligible accounts, active administrators, confirmations, and clear access guidance.
+- [x] Add authorization and mutation regression tests covering designation, revocation, self-lockout prevention, data minimization, and audit events.
+- [x] Validate protected management paths and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.

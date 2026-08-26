@@ -50,6 +50,7 @@ describe("record-management procedures", () => {
     dbState.current = fakeDb(new Map([[schools, [school]], [users, []]]));
     await expect(appRouter.createCaller(context("super_admin")).school.platform.overview()).rejects.toThrow("restricted to designated platform administrators");
     await expect(appRouter.createCaller(context("parent", 1, true)).school.platform.overview()).rejects.toThrow("restricted to designated platform administrators");
+    await expect(appRouter.createCaller(context("super_admin")).school.platform.administrators()).rejects.toThrow("restricted to designated platform administrators");
   });
 
   it("returns school inventory, active user counts, and unassigned accounts only to a platform administrator", async () => {
@@ -63,6 +64,38 @@ describe("record-management procedures", () => {
     expect(overview.schools).toEqual([expect.objectContaining({ id: 1, code: "TST", registeredUsers: 3, activeUsers: 2 })]);
     expect(overview.unassignedAccounts).toEqual([expect.objectContaining({ id: 89, email: "awaiting@example.com" })]);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.monitor_viewed", actorUserId: 1, entityType: "platform" }));
+  });
+
+  it("lists only data-minimized Super Administrator candidates and current platform administrators", async () => {
+    const activePlatformAdmin = { id: 2, openId: "platform-admin", schoolId: 1, isPlatformAdmin: true, name: "Platform Admin", email: "platform@example.com", role: "super_admin", lastSignedIn: new Date("2026-02-04"), createdAt: new Date("2026-01-01") };
+    const eligibleSuperAdmin = { id: 3, openId: "eligible-admin", schoolId: 2, isPlatformAdmin: false, name: "Eligible Admin", email: "eligible@example.com", role: "super_admin", lastSignedIn: new Date("2026-02-03"), createdAt: new Date("2026-01-02") };
+    const nonSuperAdmin = { id: 4, openId: "teacher", schoolId: 2, isPlatformAdmin: false, name: "Teacher", email: "teacher@example.com", role: "teacher", lastSignedIn: new Date(), createdAt: new Date() };
+    dbState.current = fakeDb(new Map([[users, [activePlatformAdmin, eligibleSuperAdmin, nonSuperAdmin]]]));
+
+    const listing = await appRouter.createCaller(context("super_admin", 1, true)).school.platform.administrators();
+
+    expect(listing.administrators).toEqual([expect.objectContaining({ id: 2, name: "Platform Admin" })]);
+    expect(listing.eligibleAccounts).toEqual([expect.objectContaining({ id: 3, email: "eligible@example.com" })]);
+    expect(listing.administrators[0]).not.toHaveProperty("openId");
+    expect(listing.administrators[0]).not.toHaveProperty("schoolId");
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.admin_management_viewed", actorUserId: 1, entityType: "platform" }));
+  });
+
+  it("designates and revokes eligible Super Administrators with audit events while preventing self-lockout", async () => {
+    const eligibleSuperAdmin = { id: 2, openId: "eligible-admin", schoolId: 2, isPlatformAdmin: false, role: "super_admin" };
+    dbState.current = fakeDb(new Map([[users, [eligibleSuperAdmin]]]));
+    const caller = appRouter.createCaller(context("super_admin", 1, true));
+
+    await expect(caller.school.platform.designateAdministrator({ userId: 2 })).resolves.toEqual({ success: true, changed: true });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.administrator_designated", actorUserId: 1, entityId: 2 }));
+    await expect(caller.school.platform.revokeAdministrator({ userId: 1 })).rejects.toThrow("cannot revoke your own");
+
+    dbState.current = fakeDb(new Map([[users, [{ ...eligibleSuperAdmin, isPlatformAdmin: true }]]]));
+    await expect(caller.school.platform.revokeAdministrator({ userId: 2 })).resolves.toEqual({ success: true });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.administrator_revoked", actorUserId: 1, entityId: 2 }));
+
+    dbState.current = fakeDb(new Map([[users, [{ id: 9, role: "teacher", isPlatformAdmin: false }]]]));
+    await expect(caller.school.platform.designateAdministrator({ userId: 9 })).rejects.toThrow("Only Super Administrator");
   });
 
   it("fails closed for an authenticated account without a school binding", async () => {

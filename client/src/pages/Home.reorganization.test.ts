@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MODULE_WORKFLOW_OWNERS, workspaceWorkflowVisibility } from "./Home";
+import { MODULE_WORKFLOW_OWNERS, roleNavigation, workspaceWorkflowVisibility } from "./Home";
 
 describe("Shule OS module ownership", () => {
   it("keeps every fee workflow under Fees", () => {
@@ -54,5 +54,11 @@ describe("Shule OS module ownership", () => {
       fees: false,
       manage: false,
     });
+  });
+
+  it("keeps platform monitoring hidden until a Super Administrator has server-approved platform access", () => {
+    expect(roleNavigation("super_admin", false).map(item => item.id)).not.toContain("platform");
+    expect(roleNavigation("super_admin", true).map(item => item.id)).toContain("platform");
+    expect(roleNavigation("principal", true).map(item => item.id)).not.toContain("platform");
   });
 });

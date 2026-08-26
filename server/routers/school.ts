@@ -252,6 +252,48 @@ export const schoolRouter = router({
       const { allowed } = await platformMonitorAccess(ctx.user);
       return { allowed };
     }),
+    administrators: protectedProcedure.query(async ({ ctx }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform administrator management is restricted to designated platform administrators." });
+      const rows = await db
+        .select({ id: users.id, name: users.name, email: users.email, role: users.role, schoolId: users.schoolId, isPlatformAdmin: users.isPlatformAdmin, lastSignedIn: users.lastSignedIn, createdAt: users.createdAt })
+        .from(users)
+        .where(eq(users.role, "super_admin"))
+        .orderBy(asc(users.name), asc(users.email))
+        .limit(200);
+      const accounts = rows
+        .filter(row => row.role === "super_admin")
+        .map(row => ({ id: row.id, name: row.name, email: row.email, role: row.role, hasSchoolAssignment: Boolean(row.schoolId), isPlatformAdmin: row.isPlatformAdmin, lastSignedIn: row.lastSignedIn, createdAt: row.createdAt }));
+      const administrators = accounts.filter(row => row.isPlatformAdmin);
+      const eligibleAccounts = accounts.filter(row => !row.isPlatformAdmin);
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.admin_management_viewed", entityType: "platform", metadata: { administratorCount: administrators.length, eligibleCount: eligibleAccounts.length } });
+      return { administrators, eligibleAccounts };
+    }),
+    designateAdministrator: protectedProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform administrator management is restricted to designated platform administrators." });
+      const rows = await db.select({ id: users.id, role: users.role, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const account = rows.find(row => row.id === input.userId);
+      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+      if (account.role !== "super_admin") throw new TRPCError({ code: "FORBIDDEN", message: "Only Super Administrator accounts can be designated as platform administrators." });
+      if (account.isPlatformAdmin) return { success: true, changed: false };
+      await db.update(users).set({ isPlatformAdmin: true }).where(eq(users.id, account.id));
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.administrator_designated", entityType: "user", entityId: account.id, metadata: { targetRole: account.role } });
+      return { success: true, changed: true };
+    }),
+    revokeAdministrator: protectedProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform administrator management is restricted to designated platform administrators." });
+      if (input.userId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot revoke your own platform administrator access." });
+      const rows = await db.select({ id: users.id, openId: users.openId, role: users.role, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const account = rows.find(row => row.id === input.userId);
+      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+      if (ENV.ownerOpenId && account.openId === ENV.ownerOpenId) throw new TRPCError({ code: "FORBIDDEN", message: "The platform owner designation cannot be revoked." });
+      if (account.role !== "super_admin" || !account.isPlatformAdmin) throw new TRPCError({ code: "BAD_REQUEST", message: "This account is not a current platform administrator." });
+      await db.update(users).set({ isPlatformAdmin: false }).where(eq(users.id, account.id));
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.administrator_revoked", entityType: "user", entityId: account.id, metadata: { targetRole: account.role } });
+      return { success: true };
+    }),
     overview: protectedProcedure.query(async ({ ctx }) => {
       const { db, allowed } = await platformMonitorAccess(ctx.user);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform monitoring is restricted to designated platform administrators." });
