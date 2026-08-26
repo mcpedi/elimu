@@ -42,6 +42,7 @@ import { storagePut } from "../storage";
 import { hasTimetableConflict } from "../timetable";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getTenantContext } from "../_core/tenant";
+import { ENV } from "../_core/env";
 
 const schoolRoleSchema = z.enum([
   "user",
@@ -87,6 +88,16 @@ async function assertAndBindUserToSchool(db: NonNullable<Awaited<ReturnType<type
   if (account.schoolId && account.schoolId !== schoolId) throw new TRPCError({ code: "FORBIDDEN", message: "This account belongs to a different school." });
   if (!account.schoolId) await db.update(users).set({ schoolId }).where(eq(users.id, userId));
   return account;
+}
+
+async function platformMonitorAccess(user: typeof users.$inferSelect) {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
+  if (user.role !== "super_admin") return { db, allowed: false };
+  const isOwnerBootstrap = Boolean(ENV.ownerOpenId) && user.openId === ENV.ownerOpenId;
+  if (!user.isPlatformAdmin && !isOwnerBootstrap) return { db, allowed: false };
+  if (isOwnerBootstrap && !user.isPlatformAdmin) await db.update(users).set({ isPlatformAdmin: true }).where(eq(users.id, user.id));
+  return { db, allowed: true };
 }
 
 async function getLinkedStudentIds(userId: number, role: string) {
@@ -233,6 +244,49 @@ export const schoolRouter = router({
       await db.update(users).set({ role: input.role }).where(and(eq(users.id, input.userId), eq(users.schoolId, school.id)));
       await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.role_assigned", entityType: "user", entityId: input.userId, metadata: { role: input.role } });
       return { success: true };
+    }),
+  }),
+
+  platform: router({
+    access: protectedProcedure.query(async ({ ctx }) => {
+      const { allowed } = await platformMonitorAccess(ctx.user);
+      return { allowed };
+    }),
+    overview: protectedProcedure.query(async ({ ctx }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform monitoring is restricted to designated platform administrators." });
+      const schoolRows = await db
+        .select({
+          id: schools.id,
+          name: schools.name,
+          code: schools.code,
+          county: schools.county,
+          createdAt: schools.createdAt,
+          registeredUsers: sql<number>`count(${users.id})`,
+          activeUsers: sql<number>`sum(case when ${users.lastSignedIn} >= date_sub(utc_timestamp(), interval 30 day) then 1 else 0 end)`,
+        })
+        .from(schools)
+        .leftJoin(users, eq(users.schoolId, schools.id))
+        .groupBy(schools.id, schools.name, schools.code, schools.county, schools.createdAt)
+        .orderBy(desc(schools.createdAt));
+      const unassignedAccounts = await db
+        .select({ id: users.id, name: users.name, email: users.email, role: users.role, lastSignedIn: users.lastSignedIn, createdAt: users.createdAt })
+        .from(users)
+        .where(isNull(users.schoolId))
+        .orderBy(desc(users.lastSignedIn))
+        .limit(100);
+      const monitoredSchools = schoolRows.map(row => ({ ...row, registeredUsers: Number(row.registeredUsers ?? 0), activeUsers: Number(row.activeUsers ?? 0) }));
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.monitor_viewed", entityType: "platform", metadata: { schoolCount: monitoredSchools.length, unassignedCount: unassignedAccounts.length } });
+      return {
+        totals: {
+          schools: monitoredSchools.length,
+          registeredUsers: monitoredSchools.reduce((sum, row) => sum + row.registeredUsers, 0) + unassignedAccounts.length,
+          activeUsers: monitoredSchools.reduce((sum, row) => sum + row.activeUsers, 0),
+          unassignedAccounts: unassignedAccounts.length,
+        },
+        schools: monitoredSchools,
+        unassignedAccounts,
+      };
     }),
   }),
 

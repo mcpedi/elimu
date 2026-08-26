@@ -39,6 +39,7 @@ export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   schoolId: int("schoolId").references(() => schools.id),
+  isPlatformAdmin: boolean("isPlatformAdmin").notNull().default(false),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),

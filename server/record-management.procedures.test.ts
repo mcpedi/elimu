@@ -22,6 +22,7 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
     innerJoin: () => query(table),
     leftJoin: () => query(table),
     where: () => query(table),
+    groupBy: () => query(table),
     orderBy: () => query(table),
     limit: async () => rows.get(table) ?? [],
     then: (resolve: any, reject?: any) => Promise.resolve(rows.get(table) ?? []).then(resolve, reject),
@@ -34,9 +35,9 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
   };
 }
 
-function context(role: "super_admin" | "parent", schoolId: number | null = 1): TrpcContext {
+function context(role: "super_admin" | "parent", schoolId: number | null = 1, isPlatformAdmin = false): TrpcContext {
   return {
-    user: { id: 1, openId: "management-test", schoolId, name: "Test", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
+    user: { id: 1, openId: "management-test", schoolId, isPlatformAdmin, name: "Test", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => undefined } as TrpcContext["res"],
   };
@@ -45,6 +46,25 @@ function context(role: "super_admin" | "parent", schoolId: number | null = 1): T
 const school = { id: 1, name: "Test School" };
 
 describe("record-management procedures", () => {
+  it("restricts platform monitoring to explicitly designated platform administrators", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [users, []]]));
+    await expect(appRouter.createCaller(context("super_admin")).school.platform.overview()).rejects.toThrow("restricted to designated platform administrators");
+    await expect(appRouter.createCaller(context("parent", 1, true)).school.platform.overview()).rejects.toThrow("restricted to designated platform administrators");
+  });
+
+  it("returns school inventory, active user counts, and unassigned accounts only to a platform administrator", async () => {
+    const monitoredSchool = { ...school, code: "TST", county: "Nairobi", createdAt: new Date("2026-01-01"), registeredUsers: 3, activeUsers: 2 };
+    const unassignedAccount = { id: 89, schoolId: null, name: "Awaiting Assignment", email: "awaiting@example.com", role: "teacher", lastSignedIn: new Date("2026-02-01"), createdAt: new Date("2026-01-20") };
+    dbState.current = fakeDb(new Map([[schools, [monitoredSchool]], [users, [unassignedAccount]]]));
+
+    const overview = await appRouter.createCaller(context("super_admin", 1, true)).school.platform.overview();
+
+    expect(overview.totals).toEqual({ schools: 1, registeredUsers: 4, activeUsers: 2, unassignedAccounts: 1 });
+    expect(overview.schools).toEqual([expect.objectContaining({ id: 1, code: "TST", registeredUsers: 3, activeUsers: 2 })]);
+    expect(overview.unassignedAccounts).toEqual([expect.objectContaining({ id: 89, email: "awaiting@example.com" })]);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.monitor_viewed", actorUserId: 1, entityType: "platform" }));
+  });
+
   it("fails closed for an authenticated account without a school binding", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]], [departments, []]]));
     await expect(appRouter.createCaller(context("super_admin", null)).school.academics.createDepartment({ name: "Sciences", code: "sci" })).rejects.toThrow("not assigned to a school");

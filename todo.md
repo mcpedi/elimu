@@ -128,6 +128,12 @@
 - [x] Audit and harden the shared tenant resolver plus staff, learner, document, report-card, finance, search, and audit query paths for strict server-side school scoping.
 - [x] Bind authenticated users and learner sessions to exactly one school context on every protected procedure and exported document path.
 - [x] Add adversarial regression tests proving one school cannot read, update, export, or search another school's records.
-- [ ] Validate the hardened tenant boundaries with type checks, the full regression suite, and a new recoverable security checkpoint.
+- [x] Validate the hardened tenant boundaries with type checks, the full regression suite, and a new recoverable security checkpoint.
 - [x] Add a focused tenant-isolation regression proving `school.search` never returns students, teachers, or subjects from another school.
 - [x] Complete explicit verification of the remaining school-scoped query families or narrow the audit checklist wording to match proven coverage.
+
+- [x] Define a platform-only Super Administrator monitoring contract that aggregates schools without exposing cross-school records to school-level roles.
+- [x] Add protected platform-monitoring procedures for registered schools, active user counts by school, and unassigned accounts.
+- [x] Add a responsive Super Administrator dashboard with school inventory, user-count summaries, and privacy-safe unassigned-account monitoring.
+- [x] Add regression tests for platform authorization, correct aggregation, and denial to non-platform roles.
+- [x] Validate the protected platform procedures plus the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.

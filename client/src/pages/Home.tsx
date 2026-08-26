@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { BRAND_LOGO_URL } from "@/const";
 import { format } from "date-fns";
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileBarChart, FileText, GraduationCap, LayoutDashboard, ListChecks, Loader2, Megaphone, MoreHorizontal, Plus, ReceiptText, Search, Settings2, ShieldCheck, SquareArrowOutUpRight, TableProperties, Users, UserRoundCog, WalletCards,
+  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, Building2, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileBarChart, FileText, GraduationCap, LayoutDashboard, ListChecks, Loader2, Megaphone, MoreHorizontal, Plus, ReceiptText, Search, Settings2, ShieldCheck, SquareArrowOutUpRight, TableProperties, UserCheck, UserRoundCog, UserRoundX, Users, WalletCards,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -50,10 +50,10 @@ function downloadCsv(filename: string, rows: Array<Record<string, string | numbe
   toast.success("Export downloaded. It can be opened in Excel.");
 }
 
-function roleNavigation(role?: string): NavigationItem[] {
+function roleNavigation(role?: string, isPlatformAdmin = false): NavigationItem[] {
   const shared = [{ id: "dashboard", label: "Overview", icon: LayoutDashboard }];
   if (["super_admin", "principal", "deputy_principal", "bursar"].includes(role ?? "")) {
-    return [...shared, { id: "students", label: "Students", icon: Users }, { id: "teachers", label: "Teachers", icon: UserRoundCog }, { id: "academics", label: "Academics", icon: BookOpenCheck }, { id: "attendance", label: "Attendance", icon: ClipboardCheck }, { id: "fees", label: "Fees", icon: WalletCards }, { id: "timetable", label: "Timetable", icon: CalendarDays }, { id: "announcements", label: "Announcements", icon: Megaphone }, { id: "operations", label: "Daily tasks", icon: ListChecks }, { id: "advanced", label: "Insights & alerts", icon: Settings2 }, ...(role !== "bursar" ? [{ id: "manage", label: "Record maintenance", icon: Settings2 }] : []), { id: "reports", label: "Reports", icon: FileBarChart }, { id: "audit", label: "Audit log", icon: ShieldCheck }, ...(role === "super_admin" ? [{ id: "settings", label: "Settings", icon: Settings2 }] : [])];
+    return [...shared, ...(isPlatformAdmin ? [{ id: "platform", label: "Platform monitor", icon: Building2 }] : []), { id: "students", label: "Students", icon: Users }, { id: "teachers", label: "Teachers", icon: UserRoundCog }, { id: "academics", label: "Academics", icon: BookOpenCheck }, { id: "attendance", label: "Attendance", icon: ClipboardCheck }, { id: "fees", label: "Fees", icon: WalletCards }, { id: "timetable", label: "Timetable", icon: CalendarDays }, { id: "announcements", label: "Announcements", icon: Megaphone }, { id: "operations", label: "Daily tasks", icon: ListChecks }, { id: "advanced", label: "Insights & alerts", icon: Settings2 }, ...(role !== "bursar" ? [{ id: "manage", label: "Record maintenance", icon: Settings2 }] : []), { id: "reports", label: "Reports", icon: FileBarChart }, { id: "audit", label: "Audit log", icon: ShieldCheck }, ...(role === "super_admin" ? [{ id: "settings", label: "Settings", icon: Settings2 }] : [])];
   }
   if (["teacher", "class_teacher"].includes(role ?? "")) {
     return [...shared, { id: "students", label: "My classes", icon: Users }, { id: "academics", label: "Marks & results", icon: BookOpenCheck }, { id: "attendance", label: "Attendance", icon: ClipboardCheck }, { id: "timetable", label: "Timetable", icon: CalendarDays }, { id: "announcements", label: "Announcements", icon: Megaphone }];
@@ -323,14 +323,40 @@ function ClassSelect({ classes, value, onChange }: { classes: Array<{ id: number
 function YearSelect({ years, value, onChange }: { years: Array<{ id: number; name: string }>; value: string; onChange: (value: string) => void }) { return <Select value={value} onValueChange={onChange}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Academic year" /></SelectTrigger><SelectContent>{years.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}</SelectContent></Select>; }
 function TermSelect({ terms, yearId, value, onChange }: { terms: Array<{ id: number; name: string; academicYearId: number }>; yearId: string; value: string; onChange: (value: string) => void }) { return <Select value={value} onValueChange={onChange}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Term" /></SelectTrigger><SelectContent>{terms.filter(item => !yearId || item.academicYearId === Number(yearId)).map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}</SelectContent></Select>; }
 
+function PlatformMonitor() {
+  const overview = trpc.school.platform.overview.useQuery();
+  if (overview.isLoading) return <DashboardSkeleton />;
+  if (overview.error || !overview.data) return <ErrorState title="Platform monitoring is unavailable" description={overview.error?.message ?? "Refresh to try again."} onRetry={() => void overview.refetch()} />;
+  const data = overview.data;
+  return <>
+    <SectionHeading eyebrow="Platform-only oversight" title="School network monitor" description="Monitor registration and account-assignment health across the platform. This view does not expose learner, finance, or academic records.">
+      <Button variant="outline" onClick={() => void overview.refetch()} className="rounded-xl bg-white dark:bg-transparent"><Activity className="mr-2 h-4 w-4" />Refresh</Button>
+    </SectionHeading>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <MetricCard label="Registered schools" value={data.totals.schools.toLocaleString()} note="School profiles on the platform" icon={Building2} />
+      <MetricCard label="Registered users" value={data.totals.registeredUsers.toLocaleString()} note="Assigned and awaiting assignment" icon={Users} tone="blue" />
+      <MetricCard label="Active users" value={data.totals.activeUsers.toLocaleString()} note="Signed in during the past 30 days" icon={UserCheck} tone="green" />
+      <MetricCard label="Unassigned accounts" value={data.totals.unassignedAccounts.toLocaleString()} note="Require school assignment review" icon={UserRoundX} tone={data.totals.unassignedAccounts ? "rose" : "gold"} />
+    </div>
+    <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+      <Card className="border-emerald-950/8 bg-white/85 shadow-[0_14px_36px_-26px_rgba(10,65,48,0.28)] dark:border-white/8 dark:bg-[#172420]">
+        <CardHeader><CardTitle className="text-base">Registered schools</CardTitle><CardDescription>Account-volume and recent-activity signals only. School operational records remain tenant-scoped.</CardDescription></CardHeader>
+        <CardContent><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="border-y border-emerald-950/7 text-[10px] uppercase tracking-[0.14em] text-slate-400"><tr><th className="px-3 py-3 font-semibold">School</th><th className="px-3 py-3 font-semibold">County</th><th className="px-3 py-3 font-semibold">Registered</th><th className="px-3 py-3 font-semibold">Active (30d)</th><th className="px-3 py-3 font-semibold">Registered on</th></tr></thead><tbody>{data.schools.length ? data.schools.map(item => <tr key={item.id} className="border-b border-emerald-950/6 dark:border-white/7"><td className="px-3 py-3.5"><p className="font-semibold text-[#133b30] dark:text-emerald-50">{item.name}</p><p className="mt-0.5 font-mono text-[11px] text-slate-400">{item.code}</p></td><td className="px-3 py-3.5 text-slate-600 dark:text-slate-300">{item.county || "Not recorded"}</td><td className="px-3 py-3.5 font-semibold">{item.registeredUsers.toLocaleString()}</td><td className="px-3 py-3.5"><span className="font-semibold text-[#0d4437] dark:text-emerald-300">{item.activeUsers.toLocaleString()}</span><span className="ml-1 text-xs text-slate-400">active</span></td><td className="px-3 py-3.5 text-slate-500">{formatDate(item.createdAt)}</td></tr>) : <EmptyTable colSpan={5} label="No school profiles have been registered." />}</tbody></table></div></CardContent>
+      </Card>
+      <Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader><CardTitle className="text-base">Unassigned accounts</CardTitle><CardDescription>Accounts not yet linked to a school. Review these in the platform onboarding process.</CardDescription></CardHeader><CardContent className="space-y-3">{data.unassignedAccounts.length ? data.unassignedAccounts.map(account => <div key={account.id} className="rounded-2xl border border-amber-200/70 bg-amber-50/50 p-3.5 dark:border-amber-900/50 dark:bg-amber-950/15"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[#143b31] dark:text-emerald-50">{account.name || "Unnamed account"}</p><p className="mt-0.5 break-all text-xs text-slate-500 dark:text-slate-400">{account.email || "No email recorded"}</p></div><StatusPill value={account.role} /></div><p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">Last sign-in: {formatDate(account.lastSignedIn)} · Created: {formatDate(account.createdAt)}</p></div>) : <EmptyText label="All registered accounts are currently assigned to a school." />}</CardContent></Card>
+    </div>
+  </>;
+}
+
 function FormInput({ label, value, setValue, required = false, placeholder }: { label: string; value: string; setValue: (value: string) => void; required?: boolean; placeholder?: string }) { return <div><Label>{label}</Label><Input className="mt-2 rounded-xl" value={value} onChange={event => setValue(event.target.value)} required={required} placeholder={placeholder} /></div>; }
 
 export default function Home() {
   const { user } = useAuth();
-  const nav = useMemo(() => roleNavigation(user?.role), [user?.role]);
+  const platformAccess = trpc.school.platform.access.useQuery(undefined, { enabled: user?.role === "super_admin" });
+  const nav = useMemo(() => roleNavigation(user?.role, Boolean(platformAccess.data?.allowed)), [user?.role, platformAccess.data?.allowed]);
   const [active, setActive] = useState("dashboard");
   const safeActive = nav.some(item => item.id === active) ? active : "dashboard";
-  const titles: Record<string, string> = { dashboard: "School overview", students: "Learner records", teachers: "Teaching team", academics: "Academics", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", announcements: "Announcements", operations: "Daily tasks", advanced: "Insights & alerts", manage: "Record maintenance", reports: "Reports", audit: "Audit log", settings: "Settings & access" };
-  const content = { dashboard: <Overview />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <AdvancedControlPanel />, manage: <ManagementPanel />, reports: <ReportsPanel />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
+  const titles: Record<string, string> = { dashboard: "School overview", platform: "Platform monitor", students: "Learner records", teachers: "Teaching team", academics: "Academics", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", announcements: "Announcements", operations: "Daily tasks", advanced: "Insights & alerts", manage: "Record maintenance", reports: "Reports", audit: "Audit log", settings: "Settings & access" };
+  const content = { dashboard: <Overview />, platform: <PlatformMonitor />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <AdvancedControlPanel />, manage: <ManagementPanel />, reports: <ReportsPanel />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
   return <DashboardLayout navigation={nav} activeId={safeActive} onNavigate={setActive} title={titles[safeActive] ?? "School workspace"} subtitle="Secure, role-specific school operations">{content}</DashboardLayout>;
 }
