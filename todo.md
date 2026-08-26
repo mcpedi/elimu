@@ -170,3 +170,9 @@
 - [x] Add protected learner photo upload and retrieval procedures that persist only an object-storage key on the existing student record.
 - [x] Add responsive photo preview/upload controls to the learner workflow and reflect saved photos in the digital ID-card preview.
 - [x] Add regression coverage for authorization, image validation, tenant isolation, and ID photo rendering; validate and save a checkpoint.
+
+- [x] Replace the Students-table placeholder with a school-scoped in-app learner detail view and recent-view recording.
+- [x] Audit and complete the role-authorized subject-by-subject examination setup and marks entry flow for valid classes, subjects, and learners.
+- [x] Add controlled report-card edit/upload workflow for authorised academic staff, preserving existing draft, publication, and learner-visibility rules.
+- [x] Add regression coverage for learner detail access, subject marks validation, report-card update authorization, and tenant isolation.
+- [x] Validate desktop/mobile interactions, rerun type checks and all tests, and save a recoverable checkpoint.
