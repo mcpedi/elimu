@@ -76,3 +76,11 @@
 - [x] Normalize the current admission-number password consistently during password changes while preserving exact custom-password verification.
 - [x] Add a regression test for changing the password after login with a case/spacing variant of the admission number.
 - [x] Re-run type checking and the full regression suite after the password-change normalization fix.
+
+- [x] Add a secure school-issued one-time reset-code process for students who forget custom passwords.
+- [x] Add protected reset UI for learners and leadership issuance controls with expiry, lockout, and audit feedback.
+- [x] Add regression coverage for reset-code authorization, hashing, expiry, one-time use, rate limiting, password replacement, and session behavior.
+
+- [x] Add a reset-flow regression proving repeated invalid codes trigger lockout and a locked audit event.
+- [x] Add a reset-flow regression proving successful password reset does not set a session cookie or automatically log the learner in.
+- [x] Re-run type checking and the full regression suite after the missing reset security assertions are added.

@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schools, studentCredentials, students, users } from "../drizzle/schema";
-import { hashStudentSecret, normalizeStudentIdentifier, normalizeStudentUsernameInput, STUDENT_LOGIN_LOCK_MS, STUDENT_LOGIN_MAX_ATTEMPTS, verifyStudentSecret } from "./student-auth";
+import { createStudentResetCode, hashStudentSecret, normalizeStudentIdentifier, normalizeStudentUsernameInput, STUDENT_LOGIN_LOCK_MS, STUDENT_LOGIN_MAX_ATTEMPTS, STUDENT_RESET_TTL_MS, verifyStudentSecret } from "./student-auth";
 import { getDb, writeAuditLog } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -16,6 +16,8 @@ const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admissio
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
 const studentCurrentPasswordSchema = z.string().min(1, "Enter your current password.").max(128);
 const studentNewPasswordSchema = z.string().min(8, "Use at least 8 characters.").max(128, "Password is too long.");
+const studentResetCodeSchema = z.string().trim().min(8, "Enter the reset code from the school office.").max(32);
+const studentIdSchema = z.number().int().positive();
 const STUDENT_LOGIN_ERROR = "Invalid learner name or admission number.";
 
 async function getStudentLoginRecord(username: string) {
@@ -88,6 +90,51 @@ export const appRouter = router({
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: ONE_YEAR_MS });
       await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } } as const;
+    }),
+    issueStudentPasswordResetCode: protectedProcedure.input(z.object({ studentId: studentIdSchema })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
+      const [school] = await db.select().from(schools).orderBy(asc(schools.id)).limit(1);
+      const [student] = school ? await db.select().from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1) : [];
+      if (!school || !student || student.status === "inactive" || student.status === "transferred") throw new TRPCError({ code: "NOT_FOUND", message: "Active learner not found in this school." });
+      const resetCode = createStudentResetCode();
+      const resetCodeHash = await hashStudentSecret(resetCode);
+      const resetExpiresAt = new Date(Date.now() + STUDENT_RESET_TTL_MS);
+      const [existing] = await db.select().from(studentCredentials).where(eq(studentCredentials.studentId, student.id)).limit(1);
+      if (existing) await db.update(studentCredentials).set({ activationCodeHash: resetCodeHash, activationCodeExpiresAt: resetExpiresAt, failedAttempts: 0, lockedUntil: null }).where(eq(studentCredentials.studentId, student.id));
+      else await db.insert(studentCredentials).values({ studentId: student.id, passwordHash: null, passwordMode: "legacy_activation", activationCodeHash: resetCodeHash, activationCodeExpiresAt: resetExpiresAt, failedAttempts: 0, lockedUntil: null });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.password_reset_code_issued", entityType: "student", entityId: student.id, metadata: { admissionNo: student.admissionNo, expiresAt: resetExpiresAt.toISOString(), delivery: "school_office" } });
+      return { success: true, resetCode, expiresAt: resetExpiresAt, student: { id: student.id, name: `${student.firstName} ${student.lastName}`, admissionNo: student.admissionNo } } as const;
+    }),
+    resetStudentPassword: publicProcedure.input(z.object({ username: studentUsernameSchema, resetCode: studentResetCodeSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+      if (input.newPassword !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      const { db, school, student, username } = await getStudentLoginRecord(input.username);
+      if (!student || student.status === "inactive" || student.status === "transferred") {
+        await writeAuditLog({ schoolId: school.id, action: "student.password_reset_failed", entityType: "student_reset", metadata: { username, reason: "unknown_or_inactive_learner" } });
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Reset code invalid or expired." });
+      }
+      const [credential] = await db.select().from(studentCredentials).where(eq(studentCredentials.studentId, student.id)).limit(1);
+      if (!credential?.activationCodeHash || !credential.activationCodeExpiresAt || credential.activationCodeExpiresAt.getTime() <= Date.now()) {
+        await writeAuditLog({ schoolId: school.id, actorUserId: student.userId, action: "student.password_reset_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "reset_code_missing_or_expired" } });
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Reset code invalid or expired." });
+      }
+      if (credential.lockedUntil && credential.lockedUntil.getTime() > Date.now()) {
+        await writeAuditLog({ schoolId: school.id, actorUserId: student.userId, action: "student.password_reset_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "reset_locked" } });
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many failed attempts. Try again in 15 minutes." });
+      }
+      const validCode = await verifyStudentSecret(input.resetCode.toUpperCase(), credential.activationCodeHash);
+      if (!validCode) {
+        const failedAttempts = Number(credential.failedAttempts ?? 0) + 1;
+        const lockedUntil = failedAttempts >= STUDENT_LOGIN_MAX_ATTEMPTS ? new Date(Date.now() + STUDENT_LOGIN_LOCK_MS) : null;
+        await db.update(studentCredentials).set({ failedAttempts, lockedUntil }).where(eq(studentCredentials.studentId, student.id));
+        await writeAuditLog({ schoolId: school.id, actorUserId: student.userId, action: "student.password_reset_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "reset_code_invalid", failedAttempts, locked: Boolean(lockedUntil) } });
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Reset code invalid or expired." });
+      }
+      const newPasswordHash = await hashStudentSecret(input.newPassword);
+      await db.update(studentCredentials).set({ passwordHash: newPasswordHash, passwordMode: "custom", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }).where(eq(studentCredentials.studentId, student.id));
+      await writeAuditLog({ schoolId: student.schoolId, actorUserId: student.userId, action: "student.password_reset_completed", entityType: "student", entityId: student.id, metadata: { username, sessionIssued: false, codeConsumed: true } });
+      return { success: true } as const;
     }),
     changeStudentPassword: protectedProcedure.input(z.object({ currentPassword: studentCurrentPasswordSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ ctx, input }) => {
       if (ctx.user.role !== "student") throw new TRPCError({ code: "FORBIDDEN", message: "Only learner accounts can change a learner password." });

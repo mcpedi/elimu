@@ -32,3 +32,7 @@ The 375×812 mobile preview retained readable cards, compact controls, and botto
 The authenticated desktop dashboard remains stable after adding the learner password-change procedure and card. The primary shell, navigation, cards, and workspace spacing remain intact at 1280×720.
 
 At 375×812, the mobile header, overview cards, and bottom navigation remain readable with no visible horizontal overflow. The password settings form uses a responsive single-column flow below the small-screen breakpoint, while the three password fields align in a compact row at wider widths. The persistent preview session was administrative, so the card’s learner-only visibility was validated through the role-gated source path and procedure tests.
+
+## Student password-reset visual validation
+
+After the latest server restart, the first desktop capture showed the expected dashboard loading skeleton while authenticated queries initialized. A follow-up capture after the queries settled showed the full desktop workspace rendered normally with the existing navigation, overview cards, and independent workspace layout intact. The reset-code controls and learner reset form are role-gated and were validated through source composition, type checking, and procedure tests; the persistent preview session was administrative, so the unauthenticated learner reset mode was not directly exercised in the screenshot session.

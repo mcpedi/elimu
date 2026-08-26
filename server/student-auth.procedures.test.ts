@@ -18,7 +18,7 @@ vi.mock("./_core/sdk", () => ({
 
 import { writeAuditLog } from "./db";
 import { appRouter } from "./routers";
-import { hashStudentSecret, verifyStudentSecret } from "./student-auth";
+import { createStudentResetCode, hashStudentSecret, verifyStudentSecret } from "./student-auth";
 
 function fakeDb(initial: Map<unknown, any[]>) {
   let nextId = 100;
@@ -55,7 +55,7 @@ function response() {
   return { cookie: vi.fn(), clearCookie: vi.fn() } as unknown as TrpcContext["res"];
 }
 
-function context(role: "parent" | "student" | "teacher", res = response(), userId = 1): TrpcContext {
+function context(role: "parent" | "student" | "teacher" | "principal" | "super_admin" | "deputy_principal", res = response(), userId = 1): TrpcContext {
   return {
     user: { id: userId, openId: "student-auth-test", name: "Test User", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
@@ -153,6 +153,61 @@ describe("student authentication procedures", () => {
   it("denies learner-only results to unauthorized roles", async () => {
     dbState.current = fakeDb(new Map<unknown, any[]>([[schools, [school]], [students, []], [studentCredentials, []], [users, []]]));
     await expect(appRouter.createCaller(context("teacher")).school.students.results()).rejects.toThrow("not permitted");
+  });
+
+  it("issues a hashed one-time reset code only to leadership", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, []], [users, []]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    const result = await appRouter.createCaller(context("principal", response(), 201)).auth.issueStudentPasswordResetCode({ studentId: 11 });
+    expect(result.resetCode).toMatch(/^[A-Z0-9]{12}$/);
+    expect(tables.get(studentCredentials)?.[0].activationCodeHash).toMatch(/^scrypt\$/);
+    expect(tables.get(studentCredentials)?.[0].activationCodeHash).not.toContain(result.resetCode);
+    expect(tables.get(studentCredentials)?.[0].activationCodeExpiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_code_issued", actorUserId: 201, entityId: 11, metadata: expect.objectContaining({ delivery: "school_office" }) }));
+    await expect(appRouter.createCaller(context("parent", response(), 201)).auth.issueStudentPasswordResetCode({ studentId: 11 })).rejects.toThrow("not permitted");
+  });
+
+  it("resets a custom password once and consumes the reset code", async () => {
+    const resetCode = createStudentResetCode();
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("OldCustom42!"), passwordMode: "custom", activationCodeHash: await hashStudentSecret(resetCode), activationCodeExpiresAt: new Date(Date.now() + 30 * 60 * 1000), failedAttempts: 0, lockedUntil: null }]], [users, []]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    const res = response();
+    const result = await appRouter.createCaller(context("parent", res)).auth.resetStudentPassword({ username: "  AMINA   OTIENO ", resetCode: resetCode.toLowerCase(), newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" });
+    expect(result.success).toBe(true);
+    expect(res.cookie).not.toHaveBeenCalled();
+    const saved = tables.get(studentCredentials)?.[0];
+    expect(saved.passwordMode).toBe("custom");
+    expect(saved.activationCodeHash).toBeNull();
+    expect(saved.activationCodeExpiresAt).toBeNull();
+    expect(await verifyStudentSecret("NewPrivate42!", saved.passwordHash)).toBe(true);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_completed", entityId: 11, metadata: expect.objectContaining({ codeConsumed: true, sessionIssued: false }) }));
+    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ username: "Amina Otieno", resetCode, newPassword: "AnotherPrivate42!", confirmPassword: "AnotherPrivate42!" })).rejects.toThrow("invalid or expired");
+  });
+
+  it("locks reset attempts after repeated invalid codes and audits the lockout", async () => {
+    const resetCode = createStudentResetCode();
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("OldCustom42!"), passwordMode: "custom", activationCodeHash: await hashStudentSecret(resetCode), activationCodeExpiresAt: new Date(Date.now() + 30 * 60 * 1000), failedAttempts: 0, lockedUntil: null }]], [users, []]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    const caller = appRouter.createCaller(context("parent"));
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(caller.auth.resetStudentPassword({ username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
+    }
+    await expect(caller.auth.resetStudentPassword({ username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("Too many failed attempts");
+    expect(tables.get(studentCredentials)?.[0].failedAttempts).toBe(5);
+    expect(tables.get(studentCredentials)?.[0].lockedUntil).toBeInstanceOf(Date);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_failed", metadata: expect.objectContaining({ reason: "reset_locked" }) }));
+  });
+
+  it("rejects expired reset codes and records the failure", async () => {
+    const resetCode = createStudentResetCode();
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("OldCustom42!"), passwordMode: "custom", activationCodeHash: await hashStudentSecret(resetCode), activationCodeExpiresAt: new Date(Date.now() - 1_000), failedAttempts: 0, lockedUntil: null }]], [users, []]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ username: "Amina Otieno", resetCode, newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_failed", metadata: expect.objectContaining({ reason: "reset_code_missing_or_expired" }) }));
   });
 
   it("returns only results linked to the authenticated learner", async () => {

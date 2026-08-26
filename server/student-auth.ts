@@ -17,6 +17,11 @@ const SALT_BYTES = 16;
 
 export const STUDENT_LOGIN_LOCK_MS = 15 * 60 * 1000;
 export const STUDENT_LOGIN_MAX_ATTEMPTS = 5;
+export const STUDENT_RESET_TTL_MS = 30 * 60 * 1000;
+
+export function createStudentResetCode() {
+  return randomBytes(6).toString("hex").toUpperCase();
+}
 
 export function normalizeStudentIdentifier(value: string) {
   return value.trim().toUpperCase();
