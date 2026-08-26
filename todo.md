@@ -165,3 +165,8 @@
 - [x] Add simple school-authorized inbox, sent, read-state, conversation, and notification views.
 - [x] Expand school branding settings for motto, contact details, website, and colors across applicable screens and documents.
 - [x] Validate tenant isolation, role permissions, attachments, responsive behavior, type checks, and all regressions; save a checkpoint.
+
+- [x] Define school-scoped learner photo upload validation, storage, replacement, and role-access safeguards.
+- [x] Add protected learner photo upload and retrieval procedures that persist only an object-storage key on the existing student record.
+- [x] Add responsive photo preview/upload controls to the learner workflow and reflect saved photos in the digital ID-card preview.
+- [x] Add regression coverage for authorization, image validation, tenant isolation, and ID photo rendering; validate and save a checkpoint.
