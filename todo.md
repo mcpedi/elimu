@@ -98,4 +98,14 @@
 - [x] Add teacher-facing preview and class batch-generation controls to the Academics report-card workflow.
 - [x] Add regression tests for preview visibility, batch authorization, partial/missing marks, idempotent updates, and audit behavior.
 - [x] Validate preview and batch-generation UI responsively, rerun type checks and all tests, and save a recoverable checkpoint.
-- [ ] Save a new recoverable checkpoint after the preview/batch feature changes and validated 62-test pass, then re-mark the validation/checkpoint item complete.
+- [x] Save a new recoverable checkpoint after the preview/batch feature changes and validated 62-test pass, then re-mark the validation/checkpoint item complete.
+
+- [x] Define the report-card review/publish contract using the existing publication timestamp and confirm generated cards remain hidden from learners until released.
+- [x] Add school-scoped teacher-authorized batch publish and unpublish procedures with audit summaries and safe empty-batch handling.
+- [x] Add Academics review controls showing draft/published counts and confirmation feedback for publish or unpublish actions.
+- [x] Add regression tests for draft visibility, batch publish/unpublish authorization, idempotency, school scoping, and audit events.
+- [x] Validate the review/release UI responsively, rerun type checks and all tests, and save a new recoverable checkpoint.
+- [x] Add a focused regression proving unpublished batch cards are hidden from learner report-card retrieval until publishBatch releases them.
+- [x] Add a publish/unpublish regression proving cross-school or class/term-isolated rows are not changed by a scoped batch action.
+- [ ] Save a new recoverable checkpoint after the publish/unpublish changes and validated 64-test pass, then re-mark the validation/checkpoint item complete.
+- [x] Add a scoped unpublish regression proving only the selected school/class/term rows are unpublished while unrelated published rows remain released.

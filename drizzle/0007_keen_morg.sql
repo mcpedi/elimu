@@ -1,0 +1,1 @@
+ALTER TABLE `reportCards` MODIFY COLUMN `publishedAt` timestamp DEFAULT (now());

@@ -402,7 +402,7 @@ export const reportCards = mysqlTable("reportCards", {
   meanPoints: decimal("meanPoints", { precision: 6, scale: 2 }).notNull(),
   overallGrade: varchar("overallGrade", { length: 4 }).notNull(),
   teacherComment: text("teacherComment"),
-  publishedAt: timestamp("publishedAt").defaultNow().notNull(),
+  publishedAt: timestamp("publishedAt").defaultNow(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => [

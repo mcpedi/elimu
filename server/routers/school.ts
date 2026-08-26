@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, inArray, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   academicYears,
@@ -660,7 +660,7 @@ export const schoolRouter = router({
         }
         const resultSnapshot = learnerMarks.map(row => ({ subjectId: row.subjectId, subject: row.subject, subjectCode: row.subjectCode, score: Number(row.score), maxMarks: Number(row.maxMarks), grade: row.grade, gradePoints: row.gradePoints, assessment: row.assessment, assessmentDate: row.assessmentDate.toISOString().slice(0, 10), comment: row.comment ?? null }));
         const summary = summarizeMarks(resultSnapshot.map(row => ({ score: row.score, maxMarks: row.maxMarks, points: row.gradePoints })));
-        const values = { title: input.title?.trim() || `${termRecord.name} Report Card`, resultSnapshot, totalMarks: String(summary.total), averagePercentage: String(summary.average), meanPoints: String(summary.meanPoints), overallGrade: calculateGrade(summary.average, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade, teacherComment: input.teacherComment?.trim() || null, updatedByUserId: ctx.user.id };
+        const values = { title: input.title?.trim() || `${termRecord.name} Report Card`, resultSnapshot, totalMarks: String(summary.total), averagePercentage: String(summary.average), meanPoints: String(summary.meanPoints), overallGrade: calculateGrade(summary.average, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade, teacherComment: input.teacherComment?.trim() || null, publishedAt: null, updatedByUserId: ctx.user.id };
         const [existing] = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, student.id), eq(reportCards.termId, input.termId))).limit(1);
         if (existing) {
           await db.update(reportCards).set(values).where(eq(reportCards.id, existing.id));
@@ -675,6 +675,35 @@ export const schoolRouter = router({
       const skipped = results.length - created - updated;
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "report_card.batch_generated", entityType: "reportCard", metadata: { classId: input.classId, academicYearId: input.academicYearId, termId: input.termId, totalLearners: classStudents.length, created, updated, skipped } });
       return { success: true, created, updated, skipped, results };
+    }),
+    batchStatus: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const rows = await db.select({ id: reportCards.id, publishedAt: reportCards.publishedAt }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId)));
+      const published = rows.filter(row => Boolean(row.publishedAt)).length;
+      return { total: rows.length, published, drafts: rows.length - published };
+    }),
+    publishBatch: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const drafts = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId), isNull(reportCards.publishedAt)));
+      if (!drafts.length) return { success: true, published: 0, message: "No unpublished report cards are waiting for release." };
+      const publishedAt = new Date();
+      await db.update(reportCards).set({ publishedAt, updatedByUserId: ctx.user.id }).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId), isNull(reportCards.publishedAt)));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "report_card.batch_published", entityType: "reportCard", metadata: { classId: input.classId, academicYearId: input.academicYearId, termId: input.termId, count: drafts.length } });
+      return { success: true, published: drafts.length, message: `${drafts.length} report card${drafts.length === 1 ? "" : "s"} released to learners.` };
+    }),
+    unpublishBatch: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const published = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId), isNotNull(reportCards.publishedAt)));
+      if (!published.length) return { success: true, unpublished: 0, message: "No published report cards were found for this batch." };
+      await db.update(reportCards).set({ publishedAt: null, updatedByUserId: ctx.user.id }).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId), isNotNull(reportCards.publishedAt)));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "report_card.batch_unpublished", entityType: "reportCard", metadata: { classId: input.classId, academicYearId: input.academicYearId, termId: input.termId, count: published.length } });
+      return { success: true, unpublished: published.length, message: `${published.length} report card${published.length === 1 ? "" : "s"} returned to draft review.` };
     }),
     create: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), title: z.string().trim().min(2).max(140).optional(), teacherComment: z.string().trim().max(1200).optional() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);
@@ -706,7 +735,7 @@ export const schoolRouter = router({
       const { db, school } = await getOperatingSchool();
       const studentIds = await getLinkedStudentIds(ctx.user.id, ctx.user.role);
       if (!studentIds.length) return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, reportCards: [] };
-      const rows = await db.select({ id: reportCards.id, studentId: reportCards.studentId, studentFirstName: students.firstName, studentLastName: students.lastName, admissionNo: students.admissionNo, title: reportCards.title, academicYearId: reportCards.academicYearId, academicYear: academicYears.name, termId: reportCards.termId, term: terms.name, form: schoolClasses.form, stream: schoolClasses.stream, resultSnapshot: reportCards.resultSnapshot, totalMarks: reportCards.totalMarks, averagePercentage: reportCards.averagePercentage, meanPoints: reportCards.meanPoints, overallGrade: reportCards.overallGrade, teacherComment: reportCards.teacherComment, publishedAt: reportCards.publishedAt }).from(reportCards).innerJoin(students, eq(reportCards.studentId, students.id)).innerJoin(academicYears, eq(reportCards.academicYearId, academicYears.id)).innerJoin(terms, eq(reportCards.termId, terms.id)).innerJoin(schoolClasses, eq(reportCards.classId, schoolClasses.id)).where(and(eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds))).orderBy(desc(reportCards.publishedAt)).limit(20);
+      const rows = await db.select({ id: reportCards.id, studentId: reportCards.studentId, studentFirstName: students.firstName, studentLastName: students.lastName, admissionNo: students.admissionNo, title: reportCards.title, academicYearId: reportCards.academicYearId, academicYear: academicYears.name, termId: reportCards.termId, term: terms.name, form: schoolClasses.form, stream: schoolClasses.stream, resultSnapshot: reportCards.resultSnapshot, totalMarks: reportCards.totalMarks, averagePercentage: reportCards.averagePercentage, meanPoints: reportCards.meanPoints, overallGrade: reportCards.overallGrade, teacherComment: reportCards.teacherComment, publishedAt: reportCards.publishedAt }).from(reportCards).innerJoin(students, eq(reportCards.studentId, students.id)).innerJoin(academicYears, eq(reportCards.academicYearId, academicYears.id)).innerJoin(terms, eq(reportCards.termId, terms.id)).innerJoin(schoolClasses, eq(reportCards.classId, schoolClasses.id)).where(and(eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds), isNotNull(reportCards.publishedAt))).orderBy(desc(reportCards.publishedAt)).limit(20);
       return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, reportCards: rows };
     }),
     exportPdf: protectedProcedure.input(z.object({ reportCardId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {

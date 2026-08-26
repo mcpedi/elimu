@@ -12,16 +12,22 @@ vi.mock("./db", () => ({
 import { writeAuditLog } from "./db";
 import { appRouter } from "./routers";
 
-function fakeDb(initial: Map<unknown, any[]>) {
+function fakeDb(initial: Map<unknown, any[]>, options: { publishedOnly?: boolean; reportCardScope?: { schoolId: number; classId: number; academicYearId: number; termId: number } } = {}) {
   let nextId = 100;
+  const rowsFor = (table?: unknown) => {
+    const rows = initial.get(table) ?? [];
+    if (table !== reportCards) return rows;
+    const scoped = options.reportCardScope ? rows.filter(row => row.schoolId === options.reportCardScope?.schoolId && row.classId === options.reportCardScope?.classId && row.academicYearId === options.reportCardScope?.academicYearId && row.termId === options.reportCardScope?.termId) : rows;
+    return options.publishedOnly ? scoped.filter(row => Boolean(row.publishedAt)) : scoped;
+  };
   const query = (table?: unknown): any => ({
     from: (next: unknown) => query(next),
     innerJoin: () => query(table),
     leftJoin: () => query(table),
     orderBy: () => query(table),
     where: () => query(table),
-    limit: async () => initial.get(table) ?? [],
-    then: (resolve: any, reject?: any) => Promise.resolve(initial.get(table) ?? []).then(resolve, reject),
+    limit: async () => rowsFor(table),
+    then: (resolve: any, reject?: any) => Promise.resolve(rowsFor(table)).then(resolve, reject),
   });
   return {
     select: () => query(),
@@ -36,7 +42,8 @@ function fakeDb(initial: Map<unknown, any[]>) {
       set: (values: any) => ({
         where: async () => {
           const rows = initial.get(table) ?? [];
-          initial.set(table, rows.map(row => ({ ...row, ...values })));
+          const scopedIds = new Set(rowsFor(table).map(row => row.id));
+          initial.set(table, rows.map(row => scopedIds.has(row.id) ? { ...row, ...values } : row));
         },
       }),
     }),
@@ -91,6 +98,17 @@ describe("report-card procedures", () => {
     expect(saved).toMatchObject({ schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, overallGrade: "A", teacherComment: "Keep building on this progress." });
     expect(saved.resultSnapshot).toEqual([expect.objectContaining({ subject: "Mathematics", subjectCode: "MAT", score: 82, maxMarks: 100, grade: "A", gradePoints: 12 })]);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.created", actorUserId: 201, entityType: "reportCard", entityId: saved.id, metadata: expect.objectContaining({ studentId: 11, termId: 31, subjectCount: 1, overallGrade: "A" }) }));
+  });
+
+  it("keeps draft report cards hidden from learners until the batch is published", async () => {
+    const tables = tablesWithMarks();
+    tables.set(reportCards, [{ id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, publishedAt: null }, { id: 101, schoolId: 1, studentId: 11, academicYearId: 21, termId: 32, classId: 41, publishedAt: new Date("2026-06-01T00:00:00.000Z") }]);
+    dbState.current = fakeDb(tables, { publishedOnly: true });
+
+    const result = await appRouter.createCaller(context("student", 101)).school.reportCards.mine();
+
+    expect(result.reportCards).toHaveLength(1);
+    expect(result.reportCards[0].id).toBe(101);
   });
 
   it("lets only the linked student retrieve and export a report card with school metadata", async () => {
@@ -212,6 +230,63 @@ describe("report-card procedures", () => {
     expect(result).toMatchObject({ success: true, created: 1, updated: 0, skipped: 1 });
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_generated", actorUserId: 401 }));
     await expect(appRouter.createCaller(context("parent", 404)).school.reportCards.batchGenerate({ classId: 41, academicYearId: 21, termId: 31 })).rejects.toThrow("role is not permitted");
+  });
+
+  it("publishes and unpublishes a reviewed batch with scoped audit summaries", async () => {
+    const tables = tablesWithMarks();
+    tables.set(reportCards, [
+      { id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, publishedAt: null },
+      { id: 101, schoolId: 1, studentId: 12, academicYearId: 21, termId: 31, classId: 41, publishedAt: null },
+    ]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const published = await appRouter.createCaller(context("teacher", 401)).school.reportCards.publishBatch({ classId: 41, academicYearId: 21, termId: 31 }).catch(() => null);
+    expect(published).toBeNull();
+
+    tables.set(teachers, [{ id: 91, schoolId: 1, userId: 401 }]);
+    tables.set(teacherAssignments, [{ id: 81, teacherId: 91, classId: 41, subjectId: 51 }]);
+    const released = await appRouter.createCaller(context("teacher", 401)).school.reportCards.publishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(released).toMatchObject({ success: true, published: 2 });
+    expect(tables.get(reportCards)?.every(row => row.publishedAt instanceof Date)).toBe(true);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_published", actorUserId: 401, metadata: expect.objectContaining({ classId: 41, termId: 31, count: 2 }) }));
+
+    const withdrawn = await appRouter.createCaller(context("teacher", 401)).school.reportCards.unpublishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(withdrawn).toMatchObject({ success: true, unpublished: 2 });
+    expect(tables.get(reportCards)?.every(row => row.publishedAt === null)).toBe(true);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_unpublished", actorUserId: 401, metadata: expect.objectContaining({ classId: 41, termId: 31, count: 2 }) }));
+  });
+
+  it("does not publish or unpublish report cards outside the selected school and class-term scope", async () => {
+    const tables = tablesWithMarks();
+    tables.set(teachers, [{ id: 91, schoolId: 1, userId: 401 }]);
+    tables.set(teacherAssignments, [{ id: 81, teacherId: 91, classId: 41, subjectId: 51 }]);
+    const target = { id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, publishedAt: null };
+    const otherClass = { id: 101, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 99, publishedAt: new Date("2026-06-02T00:00:00.000Z") };
+    const otherSchool = { id: 102, schoolId: 2, studentId: 88, academicYearId: 21, termId: 31, classId: 41, publishedAt: new Date("2026-06-03T00:00:00.000Z") };
+    tables.set(reportCards, [target, otherClass, otherSchool]);
+    dbState.current = fakeDb(tables, { reportCardScope: { schoolId: 1, classId: 41, academicYearId: 21, termId: 31 } });
+
+    const result = await appRouter.createCaller(context("teacher", 401)).school.reportCards.publishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+
+    expect(result).toMatchObject({ success: true, published: 1 });
+    expect(tables.get(reportCards)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 100, publishedAt: expect.any(Date) }), expect.objectContaining({ id: 101, publishedAt: expect.any(Date) }), expect.objectContaining({ id: 102, publishedAt: expect.any(Date) })]));
+
+    const withdrawn = await appRouter.createCaller(context("teacher", 401)).school.reportCards.unpublishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(withdrawn).toMatchObject({ success: true, unpublished: 1 });
+    expect(tables.get(reportCards)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 100, publishedAt: null }), expect.objectContaining({ id: 101, publishedAt: expect.any(Date) }), expect.objectContaining({ id: 102, publishedAt: expect.any(Date) })]));
+  });
+
+  it("returns an idempotent empty result when there is no batch to publish or unpublish", async () => {
+    const tables = tablesWithMarks();
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const publish = await appRouter.createCaller(context("principal", 201)).school.reportCards.publishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+    const unpublish = await appRouter.createCaller(context("principal", 201)).school.reportCards.unpublishBatch({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(publish).toMatchObject({ success: true, published: 0 });
+    expect(unpublish).toMatchObject({ success: true, unpublished: 0 });
+    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
   it("denies report-card retrieval and export to non-student roles", async () => {
