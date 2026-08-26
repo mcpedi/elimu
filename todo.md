@@ -120,7 +120,14 @@
 - [x] Implement an accessible branded transition overlay using the uploaded logo, with reduced-motion support and no interaction lock longer than the animation.
 - [x] Wire the transition into desktop, mobile drawer, and mobile bottom navigation while preserving active-state behavior.
 - [x] Add regression coverage for transition timing/state behavior and rerun type checks, tests, and responsive visual validation.
-- [ ] Save a recoverable checkpoint after the transition animation changes and validated test pass.
+- [x] Save a recoverable checkpoint after the transition animation changes and validated test pass.
 - [x] Add a mounted DashboardLayout regression proving the transition overlay appears only after a section change and clears after the configured timeout.
 - [x] Add a mounted reduced-motion regression proving no transient loader appears when reduced motion is requested.
 - [x] Include client-side `.test.tsx` files in Vitest discovery so mounted React transition regressions run in the standard suite.
+
+- [x] Audit and harden the shared tenant resolver plus staff, learner, document, report-card, finance, search, and audit query paths for strict server-side school scoping.
+- [x] Bind authenticated users and learner sessions to exactly one school context on every protected procedure and exported document path.
+- [x] Add adversarial regression tests proving one school cannot read, update, export, or search another school's records.
+- [ ] Validate the hardened tenant boundaries with type checks, the full regression suite, and a new recoverable security checkpoint.
+- [x] Add a focused tenant-isolation regression proving `school.search` never returns students, teachers, or subjects from another school.
+- [x] Complete explicit verification of the remaining school-scoped query families or narrow the audit checklist wording to match proven coverage.

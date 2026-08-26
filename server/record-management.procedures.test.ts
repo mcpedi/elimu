@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { departments, schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments } from "../drizzle/schema";
+import { departments, schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -34,9 +34,9 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
   };
 }
 
-function context(role: "super_admin" | "parent"): TrpcContext {
+function context(role: "super_admin" | "parent", schoolId: number | null = 1): TrpcContext {
   return {
-    user: { id: 1, openId: "management-test", name: "Test", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
+    user: { id: 1, openId: "management-test", schoolId, name: "Test", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => undefined } as TrpcContext["res"],
   };
@@ -45,6 +45,28 @@ function context(role: "super_admin" | "parent"): TrpcContext {
 const school = { id: 1, name: "Test School" };
 
 describe("record-management procedures", () => {
+  it("fails closed for an authenticated account without a school binding", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [departments, []]]));
+    await expect(appRouter.createCaller(context("super_admin", null)).school.academics.createDepartment({ name: "Sciences", code: "sci" })).rejects.toThrow("not assigned to a school");
+  });
+
+  it("does not return students, teachers, or subjects from another school in search", async () => {
+    dbState.current = fakeDb(new Map([
+      [schools, [school]],
+      [students, [{ id: 22, schoolId: 2, firstName: "Foreign", lastName: "Learner", admissionNo: "OTHER-0001" }]],
+      [teachers, [{ id: 32, schoolId: 2, firstName: "Foreign", lastName: "Teacher", employeeNo: "OTHER-T1" }]],
+      [subjects, [{ id: 42, schoolId: 2, name: "Foreign Subject", code: "OTHER-SUB" }]],
+    ]));
+
+    await expect(appRouter.createCaller(context("super_admin")).school.search({ query: "Foreign" })).resolves.toEqual({ students: [], teachers: [], subjects: [] });
+  });
+
+  it("does not assign a school role to a user already bound to another school", async () => {
+    const foreignUser = { id: 99, schoolId: 2, role: "teacher" };
+    dbState.current = fakeDb(new Map([[schools, [school]], [users, [foreignUser]]]));
+    await expect(appRouter.createCaller(context("super_admin")).school.access.assignRole({ userId: 99, role: "principal" })).rejects.toThrow("belongs to a different school");
+  });
+
   it("accepts a valid school logo for an authorised administrator", async () => {
     const png = Buffer.alloc(40);
     png.set([137, 80, 78, 71, 13, 10, 26, 10]);

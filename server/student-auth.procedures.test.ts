@@ -57,7 +57,7 @@ function response() {
 
 function context(role: "parent" | "student" | "teacher" | "principal" | "super_admin" | "deputy_principal", res = response(), userId = 1): TrpcContext {
   return {
-    user: { id: userId, openId: "student-auth-test", name: "Test User", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
+    user: { id: userId, openId: "student-auth-test", schoolId: 1, name: "Test User", email: "test@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res,
   };
@@ -72,20 +72,35 @@ describe("student authentication procedures", () => {
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
     const res = response();
-    const result = await appRouter.createCaller(context("parent", res)).auth.loginStudent({ username: "  AMINA   OTIENO ", password: "adm-0042" });
+    const result = await appRouter.createCaller(context("parent", res)).auth.loginStudent({ schoolCode: "TST", username: "  AMINA   OTIENO ", password: "adm-0042" });
     expect(result.student).toMatchObject({ id: 11, admissionNo: "ADM-0042", name: "Amina Otieno" });
     expect(tables.get(studentCredentials)?.[0].passwordHash).toMatch(/^scrypt\$/);
     expect(tables.get(studentCredentials)?.[0].passwordHash).not.toContain("ADM-0042");
     expect(tables.get(users)?.[0].role).toBe("student");
+    expect(tables.get(users)?.[0].schoolId).toBe(1);
     expect(res.cookie).toHaveBeenCalledWith(COOKIE_NAME, "student-session-token", expect.objectContaining({ httpOnly: true, secure: true, maxAge: expect.any(Number) }));
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_succeeded", actorUserId: tables.get(users)?.[0].id, metadata: expect.objectContaining({ passwordMode: "admission_number" }) }));
+  });
+
+  it("rejects a learner login before any record lookup when the supplied school code is not their school", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, []], [users, []]]);
+    dbState.current = fakeDb(tables);
+    const res = response();
+    await expect(appRouter.createCaller(context("parent", res)).auth.loginStudent({ schoolCode: "OTHER", username: "Amina Otieno", password: "ADM-0042" })).rejects.toThrow("Invalid learner name or admission number.");
+    expect(res.cookie).not.toHaveBeenCalled();
+  });
+
+  it("does not return a learner record from another school to a principal", async () => {
+    const otherSchoolStudent = { ...student, id: 22, schoolId: 2, admissionNo: "OTHER-0001" };
+    dbState.current = fakeDb(new Map<unknown, any[]>([[schools, [school]], [students, [otherSchoolStudent]], [studentCredentials, []], [users, []]]));
+    await expect(appRouter.createCaller(context("principal")).school.students.get({ studentId: 22 })).rejects.toThrow("Student not found.");
   });
 
   it("blocks ambiguous learner-name usernames and records the lookup event", async () => {
     const duplicate = { ...student, id: 12, admissionNo: "ADM-0099" };
     dbState.current = fakeDb(new Map<unknown, any[]>([[schools, [school]], [students, [student, duplicate]], [studentCredentials, []], [users, []]]));
     vi.mocked(writeAuditLog).mockClear();
-    await expect(appRouter.createCaller(context("student")).auth.loginStudent({ username: "Amina Otieno", password: "ADM-0042" })).rejects.toThrow("learner name is shared");
+    await expect(appRouter.createCaller(context("student")).auth.loginStudent({ schoolCode: "TST", username: "Amina Otieno", password: "ADM-0042" })).rejects.toThrow("learner name is shared");
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_ambiguous_username", metadata: { username: "amina otieno" } }));
   });
 
@@ -93,7 +108,7 @@ describe("student authentication procedures", () => {
     const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("OldPassword42"), passwordMode: "legacy_activation", activationCodeHash: "legacy-code", activationCodeExpiresAt: new Date(Date.now() + 60_000), failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
-    const result = await appRouter.createCaller(context("student", response(), 101)).auth.loginStudent({ username: "Amina Otieno", password: "ADM-0042" });
+    const result = await appRouter.createCaller(context("student", response(), 101)).auth.loginStudent({ schoolCode: "TST", username: "Amina Otieno", password: "ADM-0042" });
     expect(result.success).toBe(true);
     expect(tables.get(studentCredentials)?.[0].passwordMode).toBe("admission_number");
     expect(tables.get(studentCredentials)?.[0].activationCodeHash).toBeNull();
@@ -105,7 +120,7 @@ describe("student authentication procedures", () => {
     const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash, activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
-    await expect(appRouter.createCaller(context("student", response(), 101)).auth.loginStudent({ username: "Amina Otieno", password: "WRONG" })).rejects.toThrow("Invalid learner name or admission number.");
+    await expect(appRouter.createCaller(context("student", response(), 101)).auth.loginStudent({ schoolCode: "TST", username: "Amina Otieno", password: "WRONG" })).rejects.toThrow("Invalid learner name or admission number.");
     expect(tables.get(studentCredentials)?.[0].failedAttempts).toBe(1);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_failed", metadata: expect.objectContaining({ failedAttempts: 1 }) }));
   });
@@ -174,7 +189,7 @@ describe("student authentication procedures", () => {
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
     const res = response();
-    const result = await appRouter.createCaller(context("parent", res)).auth.resetStudentPassword({ username: "  AMINA   OTIENO ", resetCode: resetCode.toLowerCase(), newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" });
+    const result = await appRouter.createCaller(context("parent", res)).auth.resetStudentPassword({ schoolCode: "TST", username: "  AMINA   OTIENO ", resetCode: resetCode.toLowerCase(), newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" });
     expect(result.success).toBe(true);
     expect(res.cookie).not.toHaveBeenCalled();
     const saved = tables.get(studentCredentials)?.[0];
@@ -183,7 +198,7 @@ describe("student authentication procedures", () => {
     expect(saved.activationCodeExpiresAt).toBeNull();
     expect(await verifyStudentSecret("NewPrivate42!", saved.passwordHash)).toBe(true);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_completed", entityId: 11, metadata: expect.objectContaining({ codeConsumed: true, sessionIssued: false }) }));
-    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ username: "Amina Otieno", resetCode, newPassword: "AnotherPrivate42!", confirmPassword: "AnotherPrivate42!" })).rejects.toThrow("invalid or expired");
+    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ schoolCode: "TST", username: "Amina Otieno", resetCode, newPassword: "AnotherPrivate42!", confirmPassword: "AnotherPrivate42!" })).rejects.toThrow("invalid or expired");
   });
 
   it("locks reset attempts after repeated invalid codes and audits the lockout", async () => {
@@ -193,9 +208,9 @@ describe("student authentication procedures", () => {
     vi.mocked(writeAuditLog).mockClear();
     const caller = appRouter.createCaller(context("parent"));
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      await expect(caller.auth.resetStudentPassword({ username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
+      await expect(caller.auth.resetStudentPassword({ schoolCode: "TST", username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
     }
-    await expect(caller.auth.resetStudentPassword({ username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("Too many failed attempts");
+    await expect(caller.auth.resetStudentPassword({ schoolCode: "TST", username: "Amina Otieno", resetCode: "WRONG-CODE1", newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("Too many failed attempts");
     expect(tables.get(studentCredentials)?.[0].failedAttempts).toBe(5);
     expect(tables.get(studentCredentials)?.[0].lockedUntil).toBeInstanceOf(Date);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_failed", metadata: expect.objectContaining({ reason: "reset_locked" }) }));
@@ -206,7 +221,7 @@ describe("student authentication procedures", () => {
     const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("OldCustom42!"), passwordMode: "custom", activationCodeHash: await hashStudentSecret(resetCode), activationCodeExpiresAt: new Date(Date.now() - 1_000), failedAttempts: 0, lockedUntil: null }]], [users, []]]);
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
-    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ username: "Amina Otieno", resetCode, newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
+    await expect(appRouter.createCaller(context("parent")).auth.resetStudentPassword({ schoolCode: "TST", username: "Amina Otieno", resetCode, newPassword: "NewPrivate42!", confirmPassword: "NewPrivate42!" })).rejects.toThrow("invalid or expired");
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_reset_failed", metadata: expect.objectContaining({ reason: "reset_code_missing_or_expired" }) }));
   });
 

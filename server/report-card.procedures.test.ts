@@ -50,9 +50,9 @@ function fakeDb(initial: Map<unknown, any[]>, options: { publishedOnly?: boolean
   };
 }
 
-function context(role: "student" | "teacher" | "class_teacher" | "principal" | "parent", userId: number) {
+function context(role: "student" | "teacher" | "class_teacher" | "principal" | "parent", userId: number, schoolId = 1) {
   return {
-    user: { id: userId, openId: `report-card-${userId}`, name: "Report Card Test", email: "report@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
+    user: { id: userId, openId: `report-card-${userId}`, schoolId, name: "Report Card Test", email: "report@example.com", loginMethod: "test", role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { cookie: vi.fn(), clearCookie: vi.fn() } as unknown as TrpcContext["res"],
   } satisfies TrpcContext;
@@ -86,6 +86,11 @@ function tablesWithMarks() {
 }
 
 describe("report-card procedures", () => {
+  it("fails closed when a principal is bound to a school that is not present in the scoped data", async () => {
+    dbState.current = fakeDb(new Map<unknown, any[]>([[schools, [school]], [reportCards, []]]));
+    await expect(appRouter.createCaller(context("principal", 301, 2)).school.reportCards.batchStatus({ classId: 41, academicYearId: 21, termId: 31 })).rejects.toThrow("school access is unavailable");
+  });
+
   it("allows a principal to create a school-scoped report card from term marks and audits it", async () => {
     const tables = tablesWithMarks();
     dbState.current = fakeDb(tables);
@@ -126,6 +131,18 @@ describe("report-card procedures", () => {
     expect(exported.success).toBe(true);
     expect(tables.get(reportExports)?.[0]).toMatchObject({ reportType: "student_report_card", format: "pdf", filters: { reportCardId: "100", studentId: "11" } });
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.report_card_generated", actorUserId: 101, entityType: "reportCard", entityId: 100, metadata: { studentId: 11, format: "pdf" } }));
+  });
+
+  it("does not export or audit a report card belonging to another school", async () => {
+    const tables = tablesWithMarks();
+    tables.set(reportCards, [{ id: 200, schoolId: 2, studentId: 11, academicYearId: 21, termId: 31, classId: 41, publishedAt: new Date("2026-06-01T00:00:00.000Z") }]);
+    tables.set(reportExports, []);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    await expect(appRouter.createCaller(context("student", 101)).school.reportCards.exportPdf({ reportCardId: 200 })).rejects.toThrow("Report card not found.");
+    expect(tables.get(reportExports)).toEqual([]);
+    expect(writeAuditLog).not.toHaveBeenCalledWith(expect.objectContaining({ action: "student.report_card_generated" }));
   });
 
   it("allows assigned teachers and class teachers to create or update only permitted cards", async () => {

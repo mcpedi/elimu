@@ -1,0 +1,2 @@
+ALTER TABLE `users` ADD `schoolId` int;--> statement-breakpoint
+ALTER TABLE `users` ADD CONSTRAINT `users_schoolId_schools_id_fk` FOREIGN KEY (`schoolId`) REFERENCES `schools`(`id`) ON DELETE no action ON UPDATE no action;

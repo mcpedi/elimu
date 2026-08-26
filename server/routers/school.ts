@@ -41,6 +41,7 @@ import { academicRoles, administrativeRoles, financeRoles, requireRole } from ".
 import { storagePut } from "../storage";
 import { hasTimetableConflict } from "../timetable";
 import { protectedProcedure, router } from "../_core/trpc";
+import { getTenantContext } from "../_core/tenant";
 
 const schoolRoleSchema = z.enum([
   "user",
@@ -72,16 +73,29 @@ function receiptNumber() {
 async function getOperatingSchool() {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
-  const [school] = await db.select().from(schools).orderBy(asc(schools.id)).limit(1);
-  if (!school) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Create the school profile before using operational modules." });
+  const tenant = getTenantContext();
+  if (!tenant?.schoolId) throw new TRPCError({ code: "FORBIDDEN", message: "Your account is not assigned to a school." });
+  const schoolRows = await db.select().from(schools).where(eq(schools.id, tenant.schoolId)).limit(1);
+  const school = schoolRows.find(row => row.id === tenant.schoolId);
+  if (!school) throw new TRPCError({ code: "FORBIDDEN", message: "Your school access is unavailable. Contact your school administrator." });
   return { db, school };
+}
+
+async function assertAndBindUserToSchool(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, userId: number, schoolId: number) {
+  const [account] = await db.select({ id: users.id, role: users.role, schoolId: users.schoolId }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+  if (account.schoolId && account.schoolId !== schoolId) throw new TRPCError({ code: "FORBIDDEN", message: "This account belongs to a different school." });
+  if (!account.schoolId) await db.update(users).set({ schoolId }).where(eq(users.id, userId));
+  return account;
 }
 
 async function getLinkedStudentIds(userId: number, role: string) {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
+  const tenant = getTenantContext();
+  if (!tenant?.schoolId) return [];
   if (role === "student") {
-    const rows = await db.select({ id: students.id }).from(students).where(eq(students.userId, userId));
+    const rows = await db.select({ id: students.id }).from(students).where(and(eq(students.userId, userId), eq(students.schoolId, tenant.schoolId)));
     return rows.map(row => row.id);
   }
   if (role === "parent") {
@@ -89,7 +103,7 @@ async function getLinkedStudentIds(userId: number, role: string) {
       .select({ id: studentGuardians.studentId })
       .from(guardians)
       .innerJoin(studentGuardians, eq(studentGuardians.guardianId, guardians.id))
-      .where(eq(guardians.userId, userId));
+      .where(and(eq(guardians.userId, userId), eq(guardians.schoolId, tenant.schoolId)));
     return rows.map(row => row.id);
   }
   return [];
@@ -98,7 +112,9 @@ async function getLinkedStudentIds(userId: number, role: string) {
 async function getTeacherForUser(userId: number) {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
-  const [teacher] = await db.select().from(teachers).where(eq(teachers.userId, userId)).limit(1);
+  const tenant = getTenantContext();
+  if (!tenant?.schoolId) return undefined;
+  const [teacher] = await db.select().from(teachers).where(and(eq(teachers.userId, userId), eq(teachers.schoolId, tenant.schoolId))).limit(1);
   return teacher;
 }
 
@@ -154,10 +170,11 @@ async function announcementFeedForUser(userId: number, role: string) {
 
 export const schoolRouter = router({
   setup: router({
-    status: protectedProcedure.query(async () => {
+    status: protectedProcedure.query(async ({ ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [school] = await db.select({ id: schools.id, name: schools.name }).from(schools).limit(1);
+      const schoolRows = ctx.user.schoolId ? await db.select({ id: schools.id, name: schools.name }).from(schools).where(eq(schools.id, ctx.user.schoolId)).limit(1) : [];
+      const school = schoolRows.find(row => row.id === ctx.user.schoolId);
       return { exists: Boolean(school), school };
     }),
     createSchool: protectedProcedure
@@ -166,10 +183,11 @@ export const schoolRouter = router({
         requireRole(ctx.user, ["super_admin"]);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        const [existing] = await db.select({ id: schools.id }).from(schools).limit(1);
-        if (existing) throw new TRPCError({ code: "CONFLICT", message: "This MVP is configured for a single school. Update the existing school profile instead." });
+        if (ctx.user.schoolId) throw new TRPCError({ code: "CONFLICT", message: "Your account is already assigned to a school." });
         await db.insert(schools).values({ ...input, gradeScale: DEFAULT_KENYAN_GRADING_SCALE });
         const [school] = await db.select().from(schools).where(eq(schools.code, input.code)).limit(1);
+        if (!school) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "School creation could not be completed." });
+        await db.update(users).set({ schoolId: school.id }).where(eq(users.id, ctx.user.id));
         await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school?.id, action: "school.created", entityType: "school", entityId: school?.id, metadata: { code: input.code } });
         return school;
       }),
@@ -204,16 +222,16 @@ export const schoolRouter = router({
   access: router({
     listUsers: protectedProcedure.query(async ({ ctx }) => {
       requireRole(ctx.user, ["super_admin"]);
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      return db.select({ id: users.id, name: users.name, email: users.email, role: users.role, lastSignedIn: users.lastSignedIn }).from(users).orderBy(desc(users.lastSignedIn)).limit(200);
+      const { db, school } = await getOperatingSchool();
+      return db.select({ id: users.id, name: users.name, email: users.email, role: users.role, lastSignedIn: users.lastSignedIn }).from(users).where(eq(users.schoolId, school.id)).orderBy(desc(users.lastSignedIn)).limit(200);
     }),
     assignRole: protectedProcedure.input(z.object({ userId: z.number().int().positive(), role: schoolRoleSchema.exclude(["user"]) })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin"]);
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.update(users).set({ role: input.role }).where(eq(users.id, input.userId));
-      await writeAuditLog({ actorUserId: ctx.user.id, action: "user.role_assigned", entityType: "user", entityId: input.userId, metadata: { role: input.role } });
+      const { db, school } = await getOperatingSchool();
+      const account = await assertAndBindUserToSchool(db, input.userId, school.id);
+      if (account.schoolId && account.schoolId !== school.id) throw new TRPCError({ code: "FORBIDDEN", message: "This account belongs to a different school." });
+      await db.update(users).set({ role: input.role }).where(and(eq(users.id, input.userId), eq(users.schoolId, school.id)));
+      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.role_assigned", entityType: "user", entityId: input.userId, metadata: { role: input.role } });
       return { success: true };
     }),
   }),
@@ -299,9 +317,9 @@ export const schoolRouter = router({
     }),
     get: protectedProcedure.input(z.object({ studentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       await assertStudentVisibility(ctx.user.id, ctx.user.role, input.studentId);
-      const { db } = await getOperatingSchool();
-      const [student] = await db.select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, gender: students.gender, dateOfBirth: students.dateOfBirth, phone: students.phone, email: students.email, status: students.status, enrolledOn: students.enrolledOn, form: schoolClasses.form, stream: schoolClasses.stream, classId: schoolClasses.id }).from(students).leftJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id)).where(eq(students.id, input.studentId)).limit(1);
-      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Student not found." });
+      const { db, school } = await getOperatingSchool();
+      const [student] = await db.select({ id: students.id, schoolId: students.schoolId, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, gender: students.gender, dateOfBirth: students.dateOfBirth, phone: students.phone, email: students.email, status: students.status, enrolledOn: students.enrolledOn, form: schoolClasses.form, stream: schoolClasses.stream, classId: schoolClasses.id }).from(students).leftJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id)).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student || student.schoolId !== school.id) throw new TRPCError({ code: "NOT_FOUND", message: "Student not found." });
       const [guardianRows, documentRows, subjectRows, attendanceRows, feeRows, markRows] = await Promise.all([
         db.select({ id: guardians.id, firstName: guardians.firstName, lastName: guardians.lastName, relationship: guardians.relationship, phone: guardians.phone, email: guardians.email, isPrimary: studentGuardians.isPrimary }).from(studentGuardians).innerJoin(guardians, eq(studentGuardians.guardianId, guardians.id)).where(eq(studentGuardians.studentId, input.studentId)),
         db.select().from(studentDocuments).where(eq(studentDocuments.studentId, input.studentId)).orderBy(desc(studentDocuments.createdAt)),
@@ -323,7 +341,7 @@ export const schoolRouter = router({
       requireRole(ctx.user, ["super_admin", "principal"]);
       const { db, school } = await getOperatingSchool();
       const [student] = await db.select({ id: students.id }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
-      const [account] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const account = await assertAndBindUserToSchool(db, input.userId, school.id);
       if (!student || !account) throw new TRPCError({ code: "NOT_FOUND", message: "Student or user account not found." });
       if (account.role !== "student") throw new TRPCError({ code: "BAD_REQUEST", message: "Assign the Student role before linking this account." });
       await db.update(students).set({ userId: input.userId }).where(eq(students.id, input.studentId));
@@ -334,7 +352,7 @@ export const schoolRouter = router({
       requireRole(ctx.user, ["super_admin", "principal"]);
       const { db, school } = await getOperatingSchool();
       const [guardian] = await db.select({ id: guardians.id }).from(guardians).where(and(eq(guardians.id, input.guardianId), eq(guardians.schoolId, school.id))).limit(1);
-      const [account] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const account = await assertAndBindUserToSchool(db, input.userId, school.id);
       if (!guardian || !account) throw new TRPCError({ code: "NOT_FOUND", message: "Guardian or user account not found." });
       if (account.role !== "parent") throw new TRPCError({ code: "BAD_REQUEST", message: "Assign the Parent role before linking this account." });
       await db.update(guardians).set({ userId: input.userId }).where(eq(guardians.id, input.guardianId));
@@ -387,6 +405,7 @@ export const schoolRouter = router({
     create: protectedProcedure.input(z.object({ employeeNo: z.string().min(2).max(40), firstName: z.string().min(1).max(80), lastName: z.string().min(1).max(80), phone: z.string().max(20).optional(), email: z.string().email().optional(), departmentId: z.number().int().positive().optional(), userId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
       const { db, school } = await getOperatingSchool();
+      if (input.userId) await assertAndBindUserToSchool(db, input.userId, school.id);
       await db.insert(teachers).values({ schoolId: school.id, ...input });
       const [teacher] = await db.select().from(teachers).where(and(eq(teachers.schoolId, school.id), eq(teachers.employeeNo, input.employeeNo))).limit(1);
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "teacher.created", entityType: "teacher", entityId: teacher?.id });
@@ -743,8 +762,8 @@ export const schoolRouter = router({
       const { db, school } = await getOperatingSchool();
       const studentIds = await getLinkedStudentIds(ctx.user.id, ctx.user.role);
       if (!studentIds.length) throw new TRPCError({ code: "NOT_FOUND", message: "Report card not found." });
-      const [reportCard] = await db.select({ id: reportCards.id, studentId: reportCards.studentId }).from(reportCards).where(and(eq(reportCards.id, input.reportCardId), eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds))).limit(1);
-      if (!reportCard) throw new TRPCError({ code: "NOT_FOUND", message: "Report card not found." });
+      const [reportCard] = await db.select({ id: reportCards.id, schoolId: reportCards.schoolId, studentId: reportCards.studentId }).from(reportCards).where(and(eq(reportCards.id, input.reportCardId), eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds))).limit(1);
+      if (!reportCard || reportCard.schoolId !== school.id) throw new TRPCError({ code: "NOT_FOUND", message: "Report card not found." });
       await db.insert(reportExports).values({ schoolId: school.id, userId: ctx.user.id, reportType: "student_report_card", format: "pdf", filters: { reportCardId: String(input.reportCardId), studentId: String(reportCard.studentId) } });
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.report_card_generated", entityType: "reportCard", entityId: input.reportCardId, metadata: { studentId: reportCard.studentId, format: "pdf" } });
       return { success: true };
@@ -934,7 +953,7 @@ export const schoolRouter = router({
       await db.insert(announcements).values({ schoolId: school.id, authorUserId: ctx.user.id, ...input, expiresAt: input.expiresAt ? new Date(input.expiresAt) : undefined });
       const [announcement] = await db.select().from(announcements).where(and(eq(announcements.schoolId, school.id), eq(announcements.title, input.title))).orderBy(desc(announcements.id)).limit(1);
       let recipients: number[] = [];
-      if (input.targetScope === "school") recipients = (await db.select({ id: users.id }).from(users)).map(row => row.id);
+      if (input.targetScope === "school") recipients = (await db.select({ id: users.id }).from(users).where(eq(users.schoolId, school.id))).map(row => row.id);
       else if (input.targetScope === "teachers") recipients = (await db.select({ userId: teachers.userId }).from(teachers).where(and(eq(teachers.schoolId, school.id), sql`${teachers.userId} is not null`))).map(row => row.userId).filter((id): id is number => id !== null);
       else if (input.targetScope === "parents") recipients = (await db.select({ userId: guardians.userId }).from(guardians).where(and(eq(guardians.schoolId, school.id), sql`${guardians.userId} is not null`))).map(row => row.userId).filter((id): id is number => id !== null);
       else {
@@ -963,11 +982,15 @@ export const schoolRouter = router({
     const { db, school } = await getOperatingSchool();
     const value = `%${input.query.trim()}%`;
     const [studentRows, teacherRows, subjectRows] = await Promise.all([
-      db.select({ id: students.id, label: sql<string>`concat(${students.firstName}, ' ', ${students.lastName})`, detail: students.admissionNo }).from(students).where(and(eq(students.schoolId, school.id), or(like(students.firstName, value), like(students.lastName, value), like(students.admissionNo, value)))).limit(8),
-      db.select({ id: teachers.id, label: sql<string>`concat(${teachers.firstName}, ' ', ${teachers.lastName})`, detail: teachers.employeeNo }).from(teachers).where(and(eq(teachers.schoolId, school.id), or(like(teachers.firstName, value), like(teachers.lastName, value), like(teachers.employeeNo, value)))).limit(8),
-      db.select({ id: subjects.id, label: subjects.name, detail: subjects.code }).from(subjects).where(and(eq(subjects.schoolId, school.id), or(like(subjects.name, value), like(subjects.code, value)))).limit(8),
+      db.select({ id: students.id, schoolId: students.schoolId, label: sql<string>`concat(${students.firstName}, ' ', ${students.lastName})`, detail: students.admissionNo }).from(students).where(and(eq(students.schoolId, school.id), or(like(students.firstName, value), like(students.lastName, value), like(students.admissionNo, value)))).limit(8),
+      db.select({ id: teachers.id, schoolId: teachers.schoolId, label: sql<string>`concat(${teachers.firstName}, ' ', ${teachers.lastName})`, detail: teachers.employeeNo }).from(teachers).where(and(eq(teachers.schoolId, school.id), or(like(teachers.firstName, value), like(teachers.lastName, value), like(teachers.employeeNo, value)))).limit(8),
+      db.select({ id: subjects.id, schoolId: subjects.schoolId, label: subjects.name, detail: subjects.code }).from(subjects).where(and(eq(subjects.schoolId, school.id), or(like(subjects.name, value), like(subjects.code, value)))).limit(8),
     ]);
-    return { students: studentRows, teachers: teacherRows, subjects: subjectRows };
+    return {
+      students: studentRows.filter(row => row.schoolId === school.id).map(({ schoolId: _schoolId, ...row }) => row),
+      teachers: teacherRows.filter(row => row.schoolId === school.id).map(({ schoolId: _schoolId, ...row }) => row),
+      subjects: subjectRows.filter(row => row.schoolId === school.id).map(({ schoolId: _schoolId, ...row }) => row),
+    };
   }),
 
   reports: router({

@@ -14,17 +14,19 @@ import { requireRole } from "./permissions";
 
 const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admission number as the password.").max(128);
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
+const schoolCodeSchema = z.string().trim().min(2, "Enter your school code.").max(24).transform(value => value.toUpperCase());
 const studentCurrentPasswordSchema = z.string().min(1, "Enter your current password.").max(128);
 const studentNewPasswordSchema = z.string().min(8, "Use at least 8 characters.").max(128, "Password is too long.");
 const studentResetCodeSchema = z.string().trim().min(8, "Enter the reset code from the school office.").max(32);
 const studentIdSchema = z.number().int().positive();
 const STUDENT_LOGIN_ERROR = "Invalid learner name or admission number.";
 
-async function getStudentLoginRecord(username: string) {
+async function getStudentLoginRecord(schoolCode: string, username: string) {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
-  const [school] = await db.select().from(schools).orderBy(asc(schools.id)).limit(1);
-  if (!school) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The school profile is not ready for learner sign-in." });
+  const schoolRows = await db.select().from(schools).where(eq(schools.code, schoolCode)).limit(1);
+  const school = schoolRows.find(row => row.code === schoolCode);
+  if (!school) throw new TRPCError({ code: "UNAUTHORIZED", message: STUDENT_LOGIN_ERROR });
   const normalizedUsername = normalizeStudentUsernameInput(username);
   const candidates = await db.select().from(students).where(and(eq(students.schoolId, school.id), sql`lower(trim(concat_ws(' ', ${students.firstName}, ${students.middleName}, ${students.lastName}))) = ${normalizedUsername}`)).limit(2);
   if (candidates.length > 1) {
@@ -43,10 +45,12 @@ async function ensureStudentUser(db: Awaited<ReturnType<typeof getDb>>, student:
     user = (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
     if (user && user.role !== "student") throw new TRPCError({ code: "CONFLICT", message: "This learner login identifier is already in use." });
     if (!user) {
-      await db.insert(users).values({ openId, name: `${student.firstName} ${student.lastName}`, email: student.email, loginMethod: "student_password", role: "student" });
+      await db.insert(users).values({ openId, schoolId: student.schoolId, name: `${student.firstName} ${student.lastName}`, email: student.email, loginMethod: "student_password", role: "student" });
       user = (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
     }
     if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to create the learner login account." });
+    if (user.schoolId && user.schoolId !== student.schoolId) throw new TRPCError({ code: "CONFLICT", message: "This learner account is linked to a different school." });
+    if (!user.schoolId) await db.update(users).set({ schoolId: student.schoolId }).where(eq(users.id, user.id));
     if (student.userId !== user.id) await db.update(students).set({ userId: user.id }).where(eq(students.id, student.id));
   }
   return user;
@@ -57,8 +61,8 @@ export const appRouter = router({
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
-    loginStudent: publicProcedure.input(z.object({ username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
-      const { db, school, student, username } = await getStudentLoginRecord(input.username);
+    loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
+      const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
       if (!student || student.status === "inactive" || student.status === "transferred") {
         await writeAuditLog({ schoolId: school.id, action: "student.login_failed", entityType: "student_login", metadata: { username, reason: "unknown_or_inactive_learner" } });
         throw new TRPCError({ code: "UNAUTHORIZED", message: STUDENT_LOGIN_ERROR });
@@ -95,7 +99,8 @@ export const appRouter = router({
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
-      const [school] = await db.select().from(schools).orderBy(asc(schools.id)).limit(1);
+      const schoolRows = ctx.user.schoolId ? await db.select().from(schools).where(eq(schools.id, ctx.user.schoolId)).limit(1) : [];
+      const school = schoolRows.find(row => row.id === ctx.user.schoolId);
       const [student] = school ? await db.select().from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1) : [];
       if (!school || !student || student.status === "inactive" || student.status === "transferred") throw new TRPCError({ code: "NOT_FOUND", message: "Active learner not found in this school." });
       const resetCode = createStudentResetCode();
@@ -107,9 +112,9 @@ export const appRouter = router({
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.password_reset_code_issued", entityType: "student", entityId: student.id, metadata: { admissionNo: student.admissionNo, expiresAt: resetExpiresAt.toISOString(), delivery: "school_office" } });
       return { success: true, resetCode, expiresAt: resetExpiresAt, student: { id: student.id, name: `${student.firstName} ${student.lastName}`, admissionNo: student.admissionNo } } as const;
     }),
-    resetStudentPassword: publicProcedure.input(z.object({ username: studentUsernameSchema, resetCode: studentResetCodeSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+    resetStudentPassword: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, resetCode: studentResetCodeSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
       if (input.newPassword !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
-      const { db, school, student, username } = await getStudentLoginRecord(input.username);
+      const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
       if (!student || student.status === "inactive" || student.status === "transferred") {
         await writeAuditLog({ schoolId: school.id, action: "student.password_reset_failed", entityType: "student_reset", metadata: { username, reason: "unknown_or_inactive_learner" } });
         throw new TRPCError({ code: "BAD_REQUEST", message: "Reset code invalid or expired." });
@@ -142,7 +147,7 @@ export const appRouter = router({
       if (input.newPassword !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
-      const [student] = await db.select().from(students).where(eq(students.userId, ctx.user.id)).limit(1);
+      const [student] = await db.select().from(students).where(and(eq(students.userId, ctx.user.id), eq(students.schoolId, ctx.user.schoolId!))).limit(1);
       if (!student || student.status === "inactive" || student.status === "transferred") throw new TRPCError({ code: "FORBIDDEN", message: "Your learner account is not active." });
       const [credential] = await db.select().from(studentCredentials).where(eq(studentCredentials.studentId, student.id)).limit(1);
       if (!credential?.passwordHash) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Your learner password is not ready. Sign out and sign in again with your admission number first." });
