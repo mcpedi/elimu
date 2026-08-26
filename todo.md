@@ -143,3 +143,8 @@
 - [x] Build a responsive Platform administrator management interface with searchable eligible accounts, active administrators, confirmations, and clear access guidance.
 - [x] Add authorization and mutation regression tests covering designation, revocation, self-lockout prevention, data minimization, and audit events.
 - [x] Validate protected management paths and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.
+
+- [x] Define administrator-directory filters and sort modes that operate only on the existing data-minimized platform-admin response.
+- [x] Add responsive search, assignment-status filters, activity filters, and deterministic sort controls for current and eligible administrator lists.
+- [x] Add regression coverage for filter/sort behavior and preserve platform-only navigation and procedure authorization.
+- [x] Validate directory-control logic and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.
