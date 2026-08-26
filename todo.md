@@ -107,5 +107,11 @@
 - [x] Validate the review/release UI responsively, rerun type checks and all tests, and save a new recoverable checkpoint.
 - [x] Add a focused regression proving unpublished batch cards are hidden from learner report-card retrieval until publishBatch releases them.
 - [x] Add a publish/unpublish regression proving cross-school or class/term-isolated rows are not changed by a scoped batch action.
-- [ ] Save a new recoverable checkpoint after the publish/unpublish changes and validated 64-test pass, then re-mark the validation/checkpoint item complete.
+- [x] Save a new recoverable checkpoint after the publish/unpublish changes and validated 64-test pass, then re-mark the validation/checkpoint item complete.
 - [x] Add a scoped unpublish regression proving only the selected school/class/term rows are unpublished while unrelated published rows remain released.
+
+- [x] Add the supplied Elimubora360 logo asset through the project’s durable web storage workflow.
+- [x] Apply the logo to the dashboard shell, authentication branding, browser metadata, settings, and branded printable documents without breaking existing custom school-logo behavior.
+- [x] Validate logo contrast and sizing across desktop/mobile views, rerun type checks and tests, and save a recoverable checkpoint.
+- [x] Add explicit Settings UI wiring so the Elimubora360 fallback/logo is visibly applied when no custom school logo is configured.
+- [ ] Save a recoverable checkpoint after the logo branding changes and validated 67-test pass, then re-mark the validation/checkpoint item complete.
