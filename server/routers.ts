@@ -14,6 +14,8 @@ import { requireRole } from "./permissions";
 
 const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admission number as the password.").max(128);
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
+const studentCurrentPasswordSchema = z.string().min(1, "Enter your current password.").max(128);
+const studentNewPasswordSchema = z.string().min(8, "Use at least 8 characters.").max(128, "Password is too long.");
 const STUDENT_LOGIN_ERROR = "Invalid learner name or admission number.";
 
 async function getStudentLoginRecord(username: string) {
@@ -86,6 +88,31 @@ export const appRouter = router({
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: ONE_YEAR_MS });
       await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } } as const;
+    }),
+    changeStudentPassword: protectedProcedure.input(z.object({ currentPassword: studentCurrentPasswordSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "student") throw new TRPCError({ code: "FORBIDDEN", message: "Only learner accounts can change a learner password." });
+      if (input.currentPassword === input.newPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Your new password must be different from the current password." });
+      if (input.newPassword !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
+      const [student] = await db.select().from(students).where(eq(students.userId, ctx.user.id)).limit(1);
+      if (!student || student.status === "inactive" || student.status === "transferred") throw new TRPCError({ code: "FORBIDDEN", message: "Your learner account is not active." });
+      const [credential] = await db.select().from(studentCredentials).where(eq(studentCredentials.studentId, student.id)).limit(1);
+      if (!credential?.passwordHash) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Your learner password is not ready. Sign out and sign in again with your admission number first." });
+      if (credential.lockedUntil && credential.lockedUntil.getTime() > Date.now()) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many failed attempts. Try again in 15 minutes." });
+      const currentPasswordValid = await verifyStudentSecret(input.currentPassword, credential.passwordHash) || (credential.passwordMode === "admission_number" && await verifyStudentSecret(normalizeStudentIdentifier(input.currentPassword), credential.passwordHash));
+      if (!currentPasswordValid) {
+        const failedAttempts = Number(credential.failedAttempts ?? 0) + 1;
+        const lockedUntil = failedAttempts >= STUDENT_LOGIN_MAX_ATTEMPTS ? new Date(Date.now() + STUDENT_LOGIN_LOCK_MS) : null;
+        await db.update(studentCredentials).set({ failedAttempts, lockedUntil }).where(eq(studentCredentials.studentId, student.id));
+        await writeAuditLog({ schoolId: student.schoolId, actorUserId: ctx.user.id, action: "student.password_change_failed", entityType: "student", entityId: student.id, metadata: { reason: "current_password_invalid", failedAttempts, locked: Boolean(lockedUntil) } });
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect." });
+      }
+      if (await verifyStudentSecret(input.newPassword, credential.passwordHash) || (credential.passwordMode === "admission_number" && await verifyStudentSecret(normalizeStudentIdentifier(input.newPassword), credential.passwordHash))) throw new TRPCError({ code: "BAD_REQUEST", message: "Your new password must be different from the current password." });
+      const newPasswordHash = await hashStudentSecret(input.newPassword);
+      await db.update(studentCredentials).set({ passwordHash: newPasswordHash, passwordMode: "custom", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }).where(eq(studentCredentials.studentId, student.id));
+      await writeAuditLog({ schoolId: student.schoolId, actorUserId: ctx.user.id, action: "student.password_changed", entityType: "student", entityId: student.id, metadata: { passwordMode: "custom", sessionPreserved: true } });
+      return { success: true } as const;
     }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);

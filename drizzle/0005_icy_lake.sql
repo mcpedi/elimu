@@ -1,0 +1,1 @@
+ALTER TABLE `studentCredentials` MODIFY COLUMN `passwordMode` enum('admission_number','legacy_activation','custom') NOT NULL DEFAULT 'legacy_activation';

@@ -68,3 +68,11 @@
 - [x] Add a regression test proving unauthorized roles cannot access learner-only results.
 
 - [x] Narrow the learner-auth regression checklist wording to the learner-only results authorization boundary actually covered by the test suite.
+
+- [x] Add an authenticated student password-change procedure that verifies the current password, validates the new password, and writes an audit event.
+- [x] Add a learner-facing password settings form with confirmation, clear errors, and success feedback while preserving the current session.
+- [x] Add regression coverage for password changes, wrong-current-password rejection, role boundaries, password reuse, and audit logging.
+
+- [x] Normalize the current admission-number password consistently during password changes while preserving exact custom-password verification.
+- [x] Add a regression test for changing the password after login with a case/spacing variant of the admission number.
+- [x] Re-run type checking and the full regression suite after the password-change normalization fix.

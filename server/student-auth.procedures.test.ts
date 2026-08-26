@@ -18,7 +18,7 @@ vi.mock("./_core/sdk", () => ({
 
 import { writeAuditLog } from "./db";
 import { appRouter } from "./routers";
-import { hashStudentSecret } from "./student-auth";
+import { hashStudentSecret, verifyStudentSecret } from "./student-auth";
 
 function fakeDb(initial: Map<unknown, any[]>) {
   let nextId = 100;
@@ -108,6 +108,46 @@ describe("student authentication procedures", () => {
     await expect(appRouter.createCaller(context("student", response(), 101)).auth.loginStudent({ username: "Amina Otieno", password: "WRONG" })).rejects.toThrow("Invalid learner name or admission number.");
     expect(tables.get(studentCredentials)?.[0].failedAttempts).toBe(1);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_failed", metadata: expect.objectContaining({ failedAttempts: 1 }) }));
+  });
+
+  it("changes a student password, preserves the session, and audits the change", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("ADM-0042"), passwordMode: "admission_number", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    const res = response();
+    const result = await appRouter.createCaller(context("student", res, 101)).auth.changeStudentPassword({ currentPassword: "ADM-0042", newPassword: "LearnerSafe42!", confirmPassword: "LearnerSafe42!" });
+    expect(result.success).toBe(true);
+    const saved = tables.get(studentCredentials)?.[0];
+    expect(saved.passwordMode).toBe("custom");
+    expect(await verifyStudentSecret("LearnerSafe42!", saved.passwordHash)).toBe(true);
+    expect(res.cookie).not.toHaveBeenCalled();
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_changed", actorUserId: 101, entityId: 11, metadata: expect.objectContaining({ passwordMode: "custom", sessionPreserved: true }) }));
+  });
+
+  it("accepts a normalized admission-number variant when changing the initial password", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("ADM-0042"), passwordMode: "admission_number", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
+    dbState.current = fakeDb(tables);
+    const result = await appRouter.createCaller(context("student", response(), 101)).auth.changeStudentPassword({ currentPassword: "  adm-0042 ", newPassword: "LearnerSafe99!", confirmPassword: "LearnerSafe99!" });
+    expect(result.success).toBe(true);
+    const saved = tables.get(studentCredentials)?.[0];
+    expect(saved.passwordMode).toBe("custom");
+    expect(await verifyStudentSecret("LearnerSafe99!", saved.passwordHash)).toBe(true);
+  });
+
+  it("rejects a wrong current password and increments the learner credential failure count", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("ADM-0042"), passwordMode: "admission_number", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+    await expect(appRouter.createCaller(context("student", response(), 101)).auth.changeStudentPassword({ currentPassword: "wrong-current", newPassword: "LearnerSafe42!", confirmPassword: "LearnerSafe42!" })).rejects.toThrow("Current password is incorrect.");
+    expect(tables.get(studentCredentials)?.[0].failedAttempts).toBe(1);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.password_change_failed", metadata: expect.objectContaining({ reason: "current_password_invalid", failedAttempts: 1 }) }));
+  });
+
+  it("rejects password reuse and denies password changes to non-student roles", async () => {
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student, userId: 101 }]], [studentCredentials, [{ id: 1, studentId: 11, passwordHash: await hashStudentSecret("LearnerSafe42!"), passwordMode: "custom", activationCodeHash: null, activationCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null }]], [users, [{ id: 101, openId: "student_11", role: "student", name: "Amina Otieno" }]]]);
+    dbState.current = fakeDb(tables);
+    await expect(appRouter.createCaller(context("student", response(), 101)).auth.changeStudentPassword({ currentPassword: "LearnerSafe42!", newPassword: "LearnerSafe42!", confirmPassword: "LearnerSafe42!" })).rejects.toThrow("different");
+    await expect(appRouter.createCaller(context("parent", response(), 101)).auth.changeStudentPassword({ currentPassword: "LearnerSafe42!", newPassword: "AnotherSafe42!", confirmPassword: "AnotherSafe42!" })).rejects.toThrow("Only learner accounts");
   });
 
   it("denies learner-only results to unauthorized roles", async () => {

@@ -26,3 +26,9 @@ The mobile preview at 375×812 retained the compact header, readable overview ca
 The restarted desktop preview retained the full authenticated dashboard, fixed navigation shell, and independent workspace surface after the credential-model migration. The refreshed data loaded without visible layout errors.
 
 The 375×812 mobile preview retained readable cards, compact controls, and bottom navigation without visible horizontal overflow. The new learner card is designed as a single-column touch layout; the persistent preview session was already authenticated, so the unauthenticated card itself was validated through compilation and procedure coverage rather than a manual browser login.
+
+## Learner password settings visual validation
+
+The authenticated desktop dashboard remains stable after adding the learner password-change procedure and card. The primary shell, navigation, cards, and workspace spacing remain intact at 1280×720.
+
+At 375×812, the mobile header, overview cards, and bottom navigation remain readable with no visible horizontal overflow. The password settings form uses a responsive single-column flow below the small-screen breakpoint, while the three password fields align in a compact row at wider widths. The persistent preview session was administrative, so the card’s learner-only visibility was validated through the role-gated source path and procedure tests.
