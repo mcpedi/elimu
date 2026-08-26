@@ -157,6 +157,63 @@ describe("report-card procedures", () => {
     expect(wrongTermYear.get(reportCards)).toHaveLength(0);
   });
 
+  it("returns an unsaved teacher preview without export or audit side effects", async () => {
+    const tables = tablesWithMarks();
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const result = await appRouter.createCaller(context("principal", 201)).school.reportCards.preview({ studentId: 11, academicYearId: 21, termId: 31, classId: 41, teacherComment: "Preview comment" });
+
+    expect(result).toMatchObject({ title: "Term 1 Report Card", overallGrade: "A", teacherComment: "Preview comment", student: { id: 11, admissionNo: "ADM-0042" }, classRecord: { form: "Form 2", stream: "East" } });
+    expect(result.resultSnapshot).toEqual([expect.objectContaining({ subject: "Mathematics", score: 82, grade: "A" })]);
+    expect(tables.get(reportCards)).toHaveLength(0);
+    expect(tables.get(reportExports)).toHaveLength(0);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+
+    await expect(appRouter.createCaller(context("teacher", 301)).school.reportCards.preview({ studentId: 11, academicYearId: 21, termId: 31, classId: 41 })).rejects.toThrow("not linked to a teacher profile");
+  });
+
+  it("generates a class batch with per-learner skip results, upserts idempotently, and audits one summary", async () => {
+    const secondLearner = { ...learner, id: 12, userId: 102, admissionNo: "ADM-0043", firstName: "Brian", lastName: "Kiptoo" };
+    const tables = tablesWithMarks();
+    tables.set(students, [learner, secondLearner]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const first = await appRouter.createCaller(context("principal", 201)).school.reportCards.batchGenerate({ classId: 41, academicYearId: 21, termId: 31, teacherComment: "Class progress note" });
+
+    expect(first).toMatchObject({ success: true, created: 1, updated: 0, skipped: 1 });
+    expect(first.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ studentId: 11, status: "created" }),
+      expect.objectContaining({ studentId: 12, status: "skipped", reason: "No marks entered for this learner." }),
+    ]));
+    expect(tables.get(reportCards)).toHaveLength(1);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_generated", actorUserId: 201, metadata: expect.objectContaining({ totalLearners: 2, created: 1, updated: 0, skipped: 1 }) }));
+
+    vi.mocked(writeAuditLog).mockClear();
+    const second = await appRouter.createCaller(context("principal", 201)).school.reportCards.batchGenerate({ classId: 41, academicYearId: 21, termId: 31, teacherComment: "Updated class progress note" });
+
+    expect(second).toMatchObject({ success: true, created: 0, updated: 1, skipped: 1 });
+    expect(tables.get(reportCards)?.[0].teacherComment).toBe("Updated class progress note");
+    expect(writeAuditLog).toHaveBeenCalledTimes(1);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_generated", metadata: expect.objectContaining({ totalLearners: 2, created: 0, updated: 1, skipped: 1 }) }));
+  });
+
+  it("allows an assigned teacher to batch-generate and rejects batch generation by a parent", async () => {
+    const secondLearner = { ...learner, id: 12, userId: 102, admissionNo: "ADM-0043", firstName: "Brian", lastName: "Kiptoo" };
+    const tables = tablesWithMarks();
+    tables.set(students, [learner, secondLearner]);
+    tables.set(teachers, [{ id: 91, schoolId: 1, userId: 401 }]);
+    tables.set(teacherAssignments, [{ id: 81, teacherId: 91, classId: 41, subjectId: 51 }]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const result = await appRouter.createCaller(context("teacher", 401)).school.reportCards.batchGenerate({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(result).toMatchObject({ success: true, created: 1, updated: 0, skipped: 1 });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.batch_generated", actorUserId: 401 }));
+    await expect(appRouter.createCaller(context("parent", 404)).school.reportCards.batchGenerate({ classId: 41, academicYearId: 21, termId: 31 })).rejects.toThrow("role is not permitted");
+  });
+
   it("denies report-card retrieval and export to non-student roles", async () => {
     const tables = tablesWithMarks();
     tables.set(reportCards, [{ id: 100, schoolId: 1, studentId: 11 }]);

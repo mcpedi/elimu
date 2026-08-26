@@ -92,3 +92,10 @@
 - [x] Add report-card regression tests proving assigned teachers/class teachers can create or update cards only for permitted classes, while unauthorized roles and assignments are rejected.
 - [x] Add report-card validation tests for no marks entered, learner/class mismatch, and term/year misalignment.
 - [x] Add a report-card regression test proving non-academic roles cannot call `school.reportCards.create`, alongside the existing unassigned-teacher rejection case.
+
+- [x] Add a teacher-authorized report-card preview procedure that returns an unsaved branded snapshot without creating an export audit.
+- [x] Add a school-scoped class batch report-card generation procedure with per-learner results, validation handling, and audit logging.
+- [x] Add teacher-facing preview and class batch-generation controls to the Academics report-card workflow.
+- [x] Add regression tests for preview visibility, batch authorization, partial/missing marks, idempotent updates, and audit behavior.
+- [x] Validate preview and batch-generation UI responsively, rerun type checks and all tests, and save a recoverable checkpoint.
+- [ ] Save a new recoverable checkpoint after the preview/batch feature changes and validated 62-test pass, then re-mark the validation/checkpoint item complete.
