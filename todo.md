@@ -148,3 +148,9 @@
 - [x] Add responsive search, assignment-status filters, activity filters, and deterministic sort controls for current and eligible administrator lists.
 - [x] Add regression coverage for filter/sort behavior and preserve platform-only navigation and procedure authorization.
 - [x] Validate directory-control logic and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.
+
+- [x] Define platform-only safeguards for registering additional schools and assigning only unassigned accounts to the target school and role.
+- [x] Add audited platform onboarding procedures to create a school and assign an unassigned account to a school-scoped role without cross-tenant reassignment.
+- [x] Build responsive Platform monitor controls for registering a school and assigning unassigned accounts to a selected school and permitted role.
+- [x] Add regression coverage for platform authorization, duplicate school codes, unassigned-only assignment, role validation, audit events, and tenant isolation.
+- [x] Validate protected onboarding paths and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.

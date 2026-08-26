@@ -31,7 +31,14 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
     select: () => query(),
     update: () => ({ set: () => ({ where: async () => [] }) }),
     delete: () => ({ where: async () => [] }),
-    insert: () => ({ values: async () => [] }),
+    insert: (table: unknown) => ({ values: async (value: Record<string, unknown> | Array<Record<string, unknown>>) => {
+      const existing = rows.get(table) ?? [];
+      const values = Array.isArray(value) ? value : [value];
+      const nextId = existing.reduce((maximum, item) => Math.max(maximum, Number((item as { id?: number }).id ?? 0)), 0) + 1;
+      existing.push(...values.map((item, index) => ({ id: item.id ?? nextId + index, ...item })));
+      rows.set(table, existing);
+      return [];
+    } }),
   };
 }
 
@@ -96,6 +103,30 @@ describe("record-management procedures", () => {
 
     dbState.current = fakeDb(new Map([[users, [{ id: 9, role: "teacher", isPlatformAdmin: false }]]]));
     await expect(caller.school.platform.designateAdministrator({ userId: 9 })).rejects.toThrow("Only Super Administrator");
+  });
+
+  it("registers additional schools only for designated platform administrators and rejects duplicate codes", async () => {
+    dbState.current = fakeDb(new Map([[schools, [{ id: 1, name: "Existing School", code: "EXIST", county: "Nairobi", createdAt: new Date() }]], [users, []]]));
+    await expect(appRouter.createCaller(context("super_admin")).school.platform.registerSchool({ name: "Nyota School", code: "nyt", county: "Kiambu" })).rejects.toThrow("restricted to designated platform administrators");
+
+    const caller = appRouter.createCaller(context("super_admin", 1, true));
+    await expect(caller.school.platform.registerSchool({ name: "Nyota School", code: "nyt", county: "Kiambu" })).resolves.toMatchObject({ name: "Nyota School", code: "NYT" });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.school_registered", actorUserId: 1, entityType: "school", metadata: { code: "NYT" } }));
+    await expect(caller.school.platform.registerSchool({ name: "Duplicate Nyota", code: "NYT" })).rejects.toThrow("already registered");
+  });
+
+  it("assigns only unassigned accounts to a selected school role and audits the platform onboarding action", async () => {
+    const targetSchool = { id: 2, name: "Nyota School", code: "NYT" };
+    const unassignedAccount = { id: 28, schoolId: null, role: "user" };
+    dbState.current = fakeDb(new Map([[schools, [targetSchool]], [users, [unassignedAccount]]]));
+    const caller = appRouter.createCaller(context("super_admin", 1, true));
+
+    await expect(caller.school.platform.assignUnassignedAccount({ schoolId: 2, userId: 28, role: "user" as never })).rejects.toThrow();
+    await expect(caller.school.platform.assignUnassignedAccount({ schoolId: 2, userId: 28, role: "principal" })).resolves.toEqual({ success: true });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.unassigned_account_assigned", actorUserId: 1, schoolId: 2, entityId: 28, metadata: { role: "principal", schoolCode: "NYT" } }));
+
+    dbState.current = fakeDb(new Map([[schools, [targetSchool]], [users, [{ id: 29, schoolId: 9, role: "teacher" }]]]));
+    await expect(caller.school.platform.assignUnassignedAccount({ schoolId: 2, userId: 29, role: "teacher" })).rejects.toThrow("already assigned to a school");
   });
 
   it("fails closed for an authenticated account without a school binding", async () => {

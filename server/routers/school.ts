@@ -294,6 +294,36 @@ export const schoolRouter = router({
       await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.administrator_revoked", entityType: "user", entityId: account.id, metadata: { targetRole: account.role } });
       return { success: true };
     }),
+    registerSchool: protectedProcedure
+      .input(z.object({ name: z.string().min(3).max(180), code: z.string().min(2).max(24).transform(value => value.trim().toUpperCase()), phone: z.string().max(20).optional(), email: z.string().email().optional(), county: z.string().max(80).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const { db, allowed } = await platformMonitorAccess(ctx.user);
+        if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "School registration is restricted to designated platform administrators." });
+        const existingRows = await db.select({ id: schools.id, code: schools.code }).from(schools).where(eq(schools.code, input.code)).limit(1);
+        if (existingRows.some(school => school.code === input.code)) throw new TRPCError({ code: "CONFLICT", message: "A school with this code is already registered." });
+        await db.insert(schools).values({ ...input, gradeScale: DEFAULT_KENYAN_GRADING_SCALE });
+        const createdRows = await db.select({ id: schools.id, name: schools.name, code: schools.code, county: schools.county, createdAt: schools.createdAt }).from(schools).where(eq(schools.code, input.code)).limit(1);
+        const school = createdRows.find(row => row.code === input.code);
+        if (!school) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "School registration could not be completed." });
+        await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "platform.school_registered", entityType: "school", entityId: school.id, metadata: { code: school.code } });
+        return school;
+      }),
+    assignUnassignedAccount: protectedProcedure
+      .input(z.object({ schoolId: z.number().int().positive(), userId: z.number().int().positive(), role: schoolRoleSchema.exclude(["user"]) }))
+      .mutation(async ({ ctx, input }) => {
+        const { db, allowed } = await platformMonitorAccess(ctx.user);
+        if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "School account assignment is restricted to designated platform administrators." });
+        const schoolRows = await db.select({ id: schools.id, name: schools.name, code: schools.code }).from(schools).where(eq(schools.id, input.schoolId)).limit(1);
+        const school = schoolRows.find(row => row.id === input.schoolId);
+        if (!school) throw new TRPCError({ code: "NOT_FOUND", message: "Target school was not found." });
+        const accountRows = await db.select({ id: users.id, schoolId: users.schoolId, role: users.role }).from(users).where(eq(users.id, input.userId)).limit(1);
+        const account = accountRows.find(row => row.id === input.userId);
+        if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+        if (account.schoolId) throw new TRPCError({ code: "FORBIDDEN", message: "This account is already assigned to a school and cannot be reassigned here." });
+        await db.update(users).set({ schoolId: school.id, role: input.role }).where(and(eq(users.id, account.id), isNull(users.schoolId)));
+        await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "platform.unassigned_account_assigned", entityType: "user", entityId: account.id, metadata: { role: input.role, schoolCode: school.code } });
+        return { success: true };
+      }),
     overview: protectedProcedure.query(async ({ ctx }) => {
       const { db, allowed } = await platformMonitorAccess(ctx.user);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform monitoring is restricted to designated platform administrators." });
