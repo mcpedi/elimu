@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -171,4 +171,27 @@ export function AnnouncementTargetingEntry() {
 
 export function DailyTasksSummary() {
   return <><Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader><CardTitle className="text-base text-[#143b31] dark:text-emerald-50">Start with the primary module</CardTitle><CardDescription>Daily tasks now live beside the records they change. Choose Students, Teachers, Academics, Attendance, Fees, Timetable, or Announcements from the navigation.</CardDescription></CardHeader><CardContent className="grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-[#e8f1ec] p-4 dark:bg-emerald-950/40"><Users className="h-5 w-5 text-[#0d4437] dark:text-emerald-300" /><p className="mt-3 text-sm font-semibold">People</p><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Register learners, guardians, teachers, and allocations in their own workspaces.</p></div><div className="rounded-2xl bg-[#fbf1d8] p-4 dark:bg-amber-950/30"><BookOpenCheck className="h-5 w-5 text-[#94651f] dark:text-amber-300" /><p className="mt-3 text-sm font-semibold">Records</p><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Assessments, attendance, fees, timetable entries, and notices stay with their source module.</p></div><div className="rounded-2xl bg-[#eef4f8] p-4 dark:bg-sky-950/30"><ShieldCheck className="h-5 w-5 text-sky-700 dark:text-sky-300" /><p className="mt-3 text-sm font-semibold">Protected actions</p><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Role checks, school scoping, and audit events remain enforced on every save.</p></div></CardContent></Card></>;
+}
+
+
+export function ReportCardWorkflowEntry() {
+  const config = trpc.school.academics.config.useQuery();
+  const [form, setForm] = useState({ classId: "", yearId: "", termId: "", studentId: "", teacherComment: "" });
+  const classId = Number(form.classId) || 0;
+  const studentQueryInput = useMemo(() => ({ classId: classId || undefined, status: "active" as const }), [classId]);
+  const students = trpc.school.students.list.useQuery(studentQueryInput, { enabled: Boolean(classId) });
+  const utils = trpc.useUtils();
+  const create = trpc.school.reportCards.create.useMutation({
+    onSuccess: () => {
+      toast.success("Report card published. Ready for the next learner.");
+      setForm({ classId: "", yearId: "", termId: "", studentId: "", teacherComment: "" });
+      void utils.school.reportCards.mine.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const classes = config.data?.classes ?? [];
+  const years = config.data?.academicYears ?? [];
+  const terms = config.data?.terms ?? [];
+  const selectedStudent = students.data?.find(student => String(student.id) === form.studentId);
+  return <WorkflowCard title="Create learner report card" copy="Snapshot the selected term’s marks into a branded report card. The server checks school scope, class assignment, term alignment, and teacher permissions before publishing."><form className="grid gap-3 sm:grid-cols-2" onSubmit={event => { event.preventDefault(); if (!form.classId || !form.yearId || !form.termId || !form.studentId) return toast.error("Choose a class, academic year, term, and learner."); create.mutate({ studentId: Number(form.studentId), classId: Number(form.classId), academicYearId: Number(form.yearId), termId: Number(form.termId), teacherComment: form.teacherComment.trim() || undefined }); }}><div><Label>Class</Label><div className="mt-2"><ClassSelect classes={classes} value={form.classId} onChange={value => setForm(current => ({ ...current, classId: value, studentId: "" }))} /></div></div><div><Label>Academic year</Label><div className="mt-2"><YearSelect years={years} value={form.yearId} onChange={value => setForm(current => ({ ...current, yearId: value, termId: "" }))} /></div></div><div><Label>Term</Label><div className="mt-2"><TermSelect terms={terms} yearId={form.yearId} value={form.termId} onChange={value => setForm(current => ({ ...current, termId: value }))} /></div></div><div><Label>Learner</Label><div className="mt-2"><StudentSelect students={students.data ?? []} value={form.studentId} onChange={value => setForm(current => ({ ...current, studentId: value }))} /></div></div><Textarea value={form.teacherComment} onChange={event => setForm(current => ({ ...current, teacherComment: event.target.value }))} placeholder="Optional class teacher comment" className="min-h-24 rounded-xl sm:col-span-2" maxLength={1200} /><div className="flex flex-col justify-between gap-3 rounded-xl bg-[#f4f7f5] p-3 text-xs text-slate-500 dark:bg-white/5 dark:text-slate-400 sm:col-span-2 sm:flex-row sm:items-center"><span>{selectedStudent ? `${selectedStudent.firstName} ${selectedStudent.lastName} · ${selectedStudent.admissionNo}` : "Select a learner to prepare the report card."}</span><Button type="submit" className="rounded-xl bg-[#0d4437] text-white hover:bg-[#092f26]" disabled={create.isPending}>{create.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}Create & publish report card</Button></div></form></WorkflowCard>;
 }

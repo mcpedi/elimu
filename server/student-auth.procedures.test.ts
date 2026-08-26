@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
 import { COOKIE_NAME } from "@shared/const";
-import { assessments, marks, schools, studentCredentials, students, subjects, users } from "../drizzle/schema";
+import { academicYears, assessments, marks, reportCards, reportExports, schoolClasses, schools, studentCredentials, students, subjects, teacherAssignments, teachers, terms, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -35,7 +35,7 @@ function fakeDb(initial: Map<unknown, any[]>) {
     select: () => query(),
     insert: () => ({
       values: async (values: any) => {
-        const table = values.studentId !== undefined && (values.passwordHash !== undefined || values.activationCodeHash !== undefined) ? studentCredentials : users;
+        const table = values.passwordHash !== undefined || values.activationCodeHash !== undefined ? studentCredentials : values.resultSnapshot !== undefined ? reportCards : values.reportType !== undefined ? reportExports : users;
         const row = { ...values, id: values.id ?? nextId++ };
         initial.set(table, [...(initial.get(table) ?? []), row]);
       },

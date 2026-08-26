@@ -373,6 +373,46 @@ export const notifications = mysqlTable("notifications", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export type ReportCardResult = {
+  subjectId: number;
+  subject: string;
+  subjectCode: string;
+  score: number;
+  maxMarks: number;
+  grade: string;
+  gradePoints: number;
+  assessment: string;
+  assessmentDate: string;
+  comment?: string | null;
+};
+
+export const reportCards = mysqlTable("reportCards", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  studentId: int("studentId").notNull().references(() => students.id),
+  academicYearId: int("academicYearId").notNull().references(() => academicYears.id),
+  termId: int("termId").notNull().references(() => terms.id),
+  classId: int("classId").notNull().references(() => schoolClasses.id),
+  createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+  updatedByUserId: int("updatedByUserId").notNull().references(() => users.id),
+  title: varchar("title", { length: 140 }).notNull(),
+  resultSnapshot: json("resultSnapshot").$type<ReportCardResult[]>().notNull(),
+  totalMarks: decimal("totalMarks", { precision: 10, scale: 2 }).notNull(),
+  averagePercentage: decimal("averagePercentage", { precision: 6, scale: 2 }).notNull(),
+  meanPoints: decimal("meanPoints", { precision: 6, scale: 2 }).notNull(),
+  overallGrade: varchar("overallGrade", { length: 4 }).notNull(),
+  teacherComment: text("teacherComment"),
+  publishedAt: timestamp("publishedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  uniqueIndex("report_card_student_term_unique").on(table.studentId, table.termId),
+  index("report_card_school_published_index").on(table.schoolId, table.publishedAt),
+]);
+
+export type ReportCard = typeof reportCards.$inferSelect;
+export type InsertReportCard = typeof reportCards.$inferInsert;
+
 export const reportExports = mysqlTable("reportExports", {
   id: int("id").autoincrement().primaryKey(),
   schoolId: int("schoolId").notNull().references(() => schools.id),

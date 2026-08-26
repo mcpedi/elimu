@@ -14,6 +14,7 @@ import {
   marks,
   notifications,
   payments,
+  reportCards,
   reportExports,
   receipts,
   schoolClasses,
@@ -615,6 +616,53 @@ export const schoolRouter = router({
         grouped.set(row.subjectId, entry);
       }
       return Array.from(grouped.entries()).map(([subjectId, value]) => ({ subjectId, subject: value.subject, learnersMarked: value.entries.length, ...summarizeMarks(value.entries) }));
+    }),
+  }),
+
+  reportCards: router({
+    create: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), title: z.string().trim().min(2).max(140).optional(), teacherComment: z.string().trim().max(1200).optional() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const [student] = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo, currentClassId: students.currentClassId }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Learner not found in this school." });
+      if (student.currentClassId !== input.classId) throw new TRPCError({ code: "BAD_REQUEST", message: "The learner must belong to the selected class." });
+      const [classRecord] = await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!classRecord) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found in this school." });
+      const [termRecord] = await db.select({ id: terms.id, name: terms.name, academicYearId: terms.academicYearId }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
+      if (!termRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term from the selected academic year." });
+      const markRows = await db.select({ subjectId: subjects.id, subject: subjects.name, subjectCode: subjects.code, assessment: assessments.title, assessmentDate: assessments.assessmentDate, score: marks.score, maxMarks: assessments.maxMarks, grade: marks.grade, gradePoints: marks.gradePoints, comment: marks.comment }).from(marks).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).innerJoin(subjects, eq(marks.subjectId, subjects.id)).where(and(eq(assessments.schoolId, school.id), eq(assessments.academicYearId, input.academicYearId), eq(assessments.termId, input.termId), eq(assessments.classId, input.classId), eq(marks.studentId, input.studentId))).orderBy(asc(subjects.name), asc(assessments.assessmentDate));
+      if (!markRows.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enter at least one mark for this learner before creating a report card." });
+      const resultSnapshot = markRows.map(row => ({ subjectId: row.subjectId, subject: row.subject, subjectCode: row.subjectCode, score: Number(row.score), maxMarks: Number(row.maxMarks), grade: row.grade, gradePoints: row.gradePoints, assessment: row.assessment, assessmentDate: row.assessmentDate.toISOString().slice(0, 10), comment: row.comment ?? null }));
+      const summary = summarizeMarks(resultSnapshot.map(row => ({ score: row.score, maxMarks: row.maxMarks, points: row.gradePoints })));
+      const overallGrade = calculateGrade(summary.average, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade;
+      const values = { title: input.title?.trim() || `${termRecord.name} Report Card`, resultSnapshot, totalMarks: String(summary.total), averagePercentage: String(summary.average), meanPoints: String(summary.meanPoints), overallGrade, teacherComment: input.teacherComment?.trim() || null, updatedByUserId: ctx.user.id };
+      const [existing] = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, input.studentId), eq(reportCards.termId, input.termId))).limit(1);
+      if (existing) await db.update(reportCards).set(values).where(eq(reportCards.id, existing.id));
+      else await db.insert(reportCards).values({ schoolId: school.id, studentId: input.studentId, academicYearId: input.academicYearId, termId: input.termId, classId: input.classId, createdByUserId: ctx.user.id, ...values });
+      const [saved] = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, input.studentId), eq(reportCards.termId, input.termId))).limit(1);
+      if (!saved) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Report card could not be saved." });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: existing ? "report_card.updated" : "report_card.created", entityType: "reportCard", entityId: saved.id, metadata: { studentId: student.id, academicYearId: input.academicYearId, termId: input.termId, classId: classRecord.id, subjectCount: resultSnapshot.length, average: summary.average, overallGrade } });
+      return { success: true, reportCardId: saved.id, updated: Boolean(existing) };
+    }),
+    mine: protectedProcedure.query(async ({ ctx }) => {
+      requireRole(ctx.user, ["student"]);
+      const { db, school } = await getOperatingSchool();
+      const studentIds = await getLinkedStudentIds(ctx.user.id, ctx.user.role);
+      if (!studentIds.length) return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, reportCards: [] };
+      const rows = await db.select({ id: reportCards.id, studentId: reportCards.studentId, studentFirstName: students.firstName, studentLastName: students.lastName, admissionNo: students.admissionNo, title: reportCards.title, academicYearId: reportCards.academicYearId, academicYear: academicYears.name, termId: reportCards.termId, term: terms.name, form: schoolClasses.form, stream: schoolClasses.stream, resultSnapshot: reportCards.resultSnapshot, totalMarks: reportCards.totalMarks, averagePercentage: reportCards.averagePercentage, meanPoints: reportCards.meanPoints, overallGrade: reportCards.overallGrade, teacherComment: reportCards.teacherComment, publishedAt: reportCards.publishedAt }).from(reportCards).innerJoin(students, eq(reportCards.studentId, students.id)).innerJoin(academicYears, eq(reportCards.academicYearId, academicYears.id)).innerJoin(terms, eq(reportCards.termId, terms.id)).innerJoin(schoolClasses, eq(reportCards.classId, schoolClasses.id)).where(and(eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds))).orderBy(desc(reportCards.publishedAt)).limit(20);
+      return { school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, reportCards: rows };
+    }),
+    exportPdf: protectedProcedure.input(z.object({ reportCardId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["student"]);
+      const { db, school } = await getOperatingSchool();
+      const studentIds = await getLinkedStudentIds(ctx.user.id, ctx.user.role);
+      if (!studentIds.length) throw new TRPCError({ code: "NOT_FOUND", message: "Report card not found." });
+      const [reportCard] = await db.select({ id: reportCards.id, studentId: reportCards.studentId }).from(reportCards).where(and(eq(reportCards.id, input.reportCardId), eq(reportCards.schoolId, school.id), inArray(reportCards.studentId, studentIds))).limit(1);
+      if (!reportCard) throw new TRPCError({ code: "NOT_FOUND", message: "Report card not found." });
+      await db.insert(reportExports).values({ schoolId: school.id, userId: ctx.user.id, reportType: "student_report_card", format: "pdf", filters: { reportCardId: String(input.reportCardId), studentId: String(reportCard.studentId) } });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.report_card_generated", entityType: "reportCard", entityId: input.reportCardId, metadata: { studentId: reportCard.studentId, format: "pdf" } });
+      return { success: true };
     }),
   }),
 

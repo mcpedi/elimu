@@ -22,6 +22,7 @@ describe("Shule OS module ownership", () => {
       "departments",
       "assessment setup",
       "marks entry",
+      "report cards",
       "class capacity",
     ]);
     expect(MODULE_WORKFLOW_OWNERS.academics).not.toContain("payments");

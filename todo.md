@@ -84,3 +84,11 @@
 - [x] Add a reset-flow regression proving repeated invalid codes trigger lockout and a locked audit event.
 - [x] Add a reset-flow regression proving successful password reset does not set a session cookie or automatically log the learner in.
 - [x] Re-run type checking and the full regression suite after the missing reset security assertions are added.
+
+- [x] Add a secure school-scoped report-card record and teacher-authorized create/update workflow.
+- [x] Add learner-only report-card access with printable branded PDF download and clear empty/loading/error states.
+- [x] Add report-card audit logging and regression coverage for teacher permissions, learner scoping, PDF/export behavior, and record validation.
+
+- [x] Add report-card regression tests proving assigned teachers/class teachers can create or update cards only for permitted classes, while unauthorized roles and assignments are rejected.
+- [x] Add report-card validation tests for no marks entered, learner/class mismatch, and term/year misalignment.
+- [x] Add a report-card regression test proving non-academic roles cannot call `school.reportCards.create`, alongside the existing unassigned-teacher rejection case.
