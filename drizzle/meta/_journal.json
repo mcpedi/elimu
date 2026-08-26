@@ -71,6 +71,13 @@
       "when": 1787744553602,
       "tag": "0009_crazy_wendell_vaughn",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1787764309957,
+      "tag": "0010_acoustic_the_enforcers",
+      "breakpoints": true
     }
   ]
 }

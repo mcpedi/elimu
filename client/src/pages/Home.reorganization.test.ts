@@ -61,4 +61,15 @@ describe("Shule OS module ownership", () => {
     expect(roleNavigation("super_admin", true).map(item => item.id)).toContain("platform");
     expect(roleNavigation("principal", true).map(item => item.id)).not.toContain("platform");
   });
+
+  it("exposes the new MVP workspaces through role-appropriate navigation", () => {
+    const leadership = roleNavigation("principal").map(item => item.id);
+    expect(leadership).toEqual(expect.arrayContaining(["homework", "calendar", "messages", "advanced", "documents"]));
+    const teacher = roleNavigation("teacher").map(item => item.id);
+    expect(teacher).toEqual(expect.arrayContaining(["homework", "calendar", "messages"]));
+    expect(teacher).not.toContain("documents");
+    const learner = roleNavigation("student").map(item => item.id);
+    expect(learner).toEqual(expect.arrayContaining(["homework", "calendar"]));
+    expect(learner).not.toContain("messages");
+  });
 });

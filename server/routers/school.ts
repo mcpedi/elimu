@@ -43,6 +43,7 @@ import { hasTimetableConflict } from "../timetable";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getTenantContext } from "../_core/tenant";
 import { ENV } from "../_core/env";
+import { mvpRouter } from "./mvp";
 
 const schoolRoleSchema = z.enum([
   "user",
@@ -180,6 +181,7 @@ async function announcementFeedForUser(userId: number, role: string) {
 }
 
 export const schoolRouter = router({
+  mvp: mvpRouter,
   setup: router({
     status: protectedProcedure.query(async ({ ctx }) => {
       const db = await getDb();

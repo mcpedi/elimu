@@ -154,3 +154,14 @@
 - [x] Build responsive Platform monitor controls for registering a school and assigning unassigned accounts to a selected school and permitted role.
 - [x] Add regression coverage for platform authorization, duplicate school codes, unassigned-only assignment, role validation, audit events, and tenant isolation.
 - [x] Validate protected onboarding paths and the responsive dashboard shell, rerun type checks and all tests, and save a recoverable checkpoint.
+
+- [x] Map the attached MVP enhancements to existing modules and define tenant-safe, role-aware data contracts without duplicating core records.
+- [x] Add safe schema migrations for calendar events, assignments, targeted notices, ID data, messages, recent views, and related document metadata.
+- [x] Implement calendar events and a targeted digital notice board with expiry-aware active views and attachments.
+- [x] Implement teacher assignment creation, learner completion, parent visibility, due-date status, and attachment access.
+- [x] Add role-specific quick actions, global learner search, dashboard activity timeline, rule-based in-app alerts, and recently viewed records.
+- [x] Add branded digital learner IDs, QR-backed minimal verification, admission/transfer documents, and print-ready outputs.
+- [x] Add validated bulk student/class/marks import-export workflows and batch report support.
+- [x] Add simple school-authorized inbox, sent, read-state, conversation, and notification views.
+- [x] Expand school branding settings for motto, contact details, website, and colors across applicable screens and documents.
+- [x] Validate tenant isolation, role permissions, attachments, responsive behavior, type checks, and all regressions; save a checkpoint.

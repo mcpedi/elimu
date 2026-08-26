@@ -61,6 +61,10 @@ export const schools = mysqlTable("schools", {
   county: varchar("county", { length: 80 }),
   address: text("address"),
   logoKey: varchar("logoKey", { length: 512 }),
+  motto: varchar("motto", { length: 180 }),
+  website: varchar("website", { length: 255 }),
+  primaryColor: varchar("primaryColor", { length: 16 }),
+  accentColor: varchar("accentColor", { length: 16 }),
   currency: varchar("currency", { length: 3 }).notNull().default("KES"),
   admissionPrefix: varchar("admissionPrefix", { length: 16 }).notNull().default("ADM"),
   gradeScale: json("gradeScale").$type<GradeBand[]>(),
@@ -146,6 +150,7 @@ export const students = mysqlTable("students", {
   dateOfBirth: date("dateOfBirth"),
   phone: varchar("phone", { length: 20 }),
   email: varchar("email", { length: 320 }),
+  photoKey: varchar("photoKey", { length: 512 }),
   currentClassId: int("currentClassId").references(() => schoolClasses.id),
   status: mysqlEnum("status", ["active", "transferred", "completed", "inactive"]).notNull().default("active"),
   enrolledOn: date("enrolledOn").notNull(),
@@ -349,7 +354,17 @@ export const assignments = mysqlTable("assignments", {
   instructions: text("instructions"),
   dueAt: timestamp("dueAt").notNull(),
   publishedAt: timestamp("publishedAt").defaultNow().notNull(),
+  attachmentKey: varchar("attachmentKey", { length: 512 }),
+  attachmentName: varchar("attachmentName", { length: 255 }),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+export const assignmentCompletions = mysqlTable("assignmentCompletions", {
+  id: int("id").autoincrement().primaryKey(),
+  assignmentId: int("assignmentId").notNull().references(() => assignments.id),
+  studentId: int("studentId").notNull().references(() => students.id),
+  completedAt: timestamp("completedAt").defaultNow().notNull(),
+}, table => [uniqueIndex("assignment_completion_unique").on(table.assignmentId, table.studentId), index("assignment_completion_student_index").on(table.studentId, table.completedAt)]);
 
 export const announcements = mysqlTable("announcements", {
   id: int("id").autoincrement().primaryKey(),
@@ -362,7 +377,58 @@ export const announcements = mysqlTable("announcements", {
   body: text("body").notNull(),
   publishedAt: timestamp("publishedAt").defaultNow().notNull(),
   expiresAt: timestamp("expiresAt"),
+  attachmentKey: varchar("attachmentKey", { length: 512 }),
+  attachmentName: varchar("attachmentName", { length: 255 }),
+  isPinned: boolean("isPinned").notNull().default(false),
 });
+
+export const calendarEvents = mysqlTable("calendarEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+  category: mysqlEnum("category", ["term", "exam", "event", "parent_meeting", "teacher_meeting", "holiday", "deadline"]).notNull(),
+  title: varchar("title", { length: 180 }).notNull(),
+  startsAt: timestamp("startsAt").notNull(),
+  endsAt: timestamp("endsAt"),
+  location: varchar("location", { length: 180 }),
+  description: text("description"),
+  targetScope: mysqlEnum("targetScope", ["school", "form", "class", "teachers", "parents", "students"]).notNull().default("school"),
+  targetForm: mysqlEnum("targetForm", ["Form 1", "Form 2", "Form 3", "Form 4"]),
+  targetClassId: int("targetClassId").references(() => schoolClasses.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("calendar_event_school_start_index").on(table.schoolId, table.startsAt)]);
+
+export const studentIdCards = mysqlTable("studentIdCards", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  studentId: int("studentId").notNull().references(() => students.id),
+  academicYearId: int("academicYearId").references(() => academicYears.id),
+  verificationToken: varchar("verificationToken", { length: 64 }).notNull().unique(),
+  generatedByUserId: int("generatedByUserId").notNull().references(() => users.id),
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+}, table => [uniqueIndex("student_id_card_school_student_year_unique").on(table.schoolId, table.studentId, table.academicYearId)]);
+
+export const messages = mysqlTable("messages", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  senderUserId: int("senderUserId").notNull().references(() => users.id),
+  recipientUserId: int("recipientUserId").notNull().references(() => users.id),
+  subject: varchar("subject", { length: 180 }).notNull(),
+  body: text("body").notNull(),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
+  readAt: timestamp("readAt"),
+}, table => [index("message_recipient_sent_index").on(table.recipientUserId, table.sentAt), index("message_sender_sent_index").on(table.senderUserId, table.sentAt)]);
+
+export const recentViews = mysqlTable("recentViews", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  userId: int("userId").notNull().references(() => users.id),
+  entityType: varchar("entityType", { length: 50 }).notNull(),
+  entityId: varchar("entityId", { length: 80 }).notNull(),
+  label: varchar("label", { length: 180 }).notNull(),
+  viewedAt: timestamp("viewedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [uniqueIndex("recent_view_user_entity_unique").on(table.userId, table.entityType, table.entityId), index("recent_view_user_viewed_index").on(table.userId, table.viewedAt)]);
 
 export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
