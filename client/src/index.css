@@ -216,3 +216,22 @@
     background-color: oklch(0.72 0.11 164 / 45%);
   }
 }
+
+
+@keyframes elimubora-section-logo {
+  0% { opacity: 0.55; transform: scale(0.94) rotate(-4deg); }
+  55% { opacity: 1; transform: scale(1.04) rotate(0deg); }
+  100% { opacity: 0.85; transform: scale(1) rotate(0deg); }
+}
+
+@keyframes elimubora-section-card {
+  0% { opacity: 0; transform: translateY(8px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.section-transition-card { animation: elimubora-section-card 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) both; }
+.section-transition-logo { animation: elimubora-section-logo 260ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .section-transition-card, .section-transition-logo { animation: none; }
+}

@@ -114,4 +114,13 @@
 - [x] Apply the logo to the dashboard shell, authentication branding, browser metadata, settings, and branded printable documents without breaking existing custom school-logo behavior.
 - [x] Validate logo contrast and sizing across desktop/mobile views, rerun type checks and tests, and save a recoverable checkpoint.
 - [x] Add explicit Settings UI wiring so the Elimubora360 fallback/logo is visibly applied when no custom school logo is configured.
-- [ ] Save a recoverable checkpoint after the logo branding changes and validated 67-test pass, then re-mark the validation/checkpoint item complete.
+- [x] Save a recoverable checkpoint after the logo branding changes and validated 67-test pass, then re-mark the validation/checkpoint item complete.
+
+- [x] Define a short Elimubora360 section-transition behavior for major dashboard navigation changes without delaying the destination content.
+- [x] Implement an accessible branded transition overlay using the uploaded logo, with reduced-motion support and no interaction lock longer than the animation.
+- [x] Wire the transition into desktop, mobile drawer, and mobile bottom navigation while preserving active-state behavior.
+- [x] Add regression coverage for transition timing/state behavior and rerun type checks, tests, and responsive visual validation.
+- [ ] Save a recoverable checkpoint after the transition animation changes and validated test pass.
+- [x] Add a mounted DashboardLayout regression proving the transition overlay appears only after a section change and clears after the configured timeout.
+- [x] Add a mounted reduced-motion regression proving no transient loader appears when reduced motion is requested.
+- [x] Include client-side `.test.tsx` files in Vitest discovery so mounted React transition regressions run in the standard suite.
