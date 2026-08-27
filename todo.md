@@ -176,3 +176,7 @@
 - [x] Add controlled report-card edit/upload workflow for authorised academic staff, preserving existing draft, publication, and learner-visibility rules.
 - [x] Add regression coverage for learner detail access, subject marks validation, report-card update authorization, and tenant isolation.
 - [x] Validate desktop/mobile interactions, rerun type checks and all tests, and save a recoverable checkpoint.
+
+- [x] Define the authorised learner-summary print content using only details already available in the protected in-app record dialog.
+- [x] Add a branded Print / save PDF action to the learner detail dialog and handle blocked pop-ups clearly.
+- [x] Add regression coverage for summary rendering and validate type checks, tests, responsive shell, and a recovery checkpoint.
