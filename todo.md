@@ -224,3 +224,7 @@
 - [x] Add an authorised Students workspace filter for all learners, learners with linked emails, or learners without linked emails.
 - [x] Keep email-presence filtering school-scoped and compatible with name, admission-number, and email search.
 - [x] Add responsive result feedback and regression coverage for filter combinations and tenant boundaries; validate and save a checkpoint.
+
+- [x] Add a visible leadership-only school-code management workflow for learner login access.
+- [x] Validate school-code format and uniqueness, preserve learner login compatibility, and audit every code change.
+- [x] Add responsive view, edit, copy/share, and regression coverage for school-code management; validate and save a checkpoint.

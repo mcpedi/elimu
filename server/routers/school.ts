@@ -204,6 +204,18 @@ export const schoolRouter = router({
         await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school?.id, action: "school.created", entityType: "school", entityId: school?.id, metadata: { code: input.code } });
         return school;
       }),
+      updateSchoolCode: protectedProcedure
+      .input(z.object({ code: z.string().trim().min(2).max(24).regex(/^[a-z0-9-]+$/i).transform(value => value.toUpperCase()) }))
+      .mutation(async ({ ctx, input }) => {
+        requireRole(ctx.user, ["super_admin", "principal"]);
+        const { db, school } = await getOperatingSchool();
+        const existingRows = await db.select({ id: schools.id, code: schools.code }).from(schools).where(eq(schools.code, input.code)).limit(5);
+        if (existingRows.some(row => row.id !== school.id && row.code === input.code)) throw new TRPCError({ code: "CONFLICT", message: "That school code is already used by another school." });
+        if (school.code === input.code) return { success: true, code: input.code };
+        await db.update(schools).set({ code: input.code }).where(eq(schools.id, school.id));
+        await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "school.login_code_updated", entityType: "school", entityId: school.id, metadata: { previousCode: school.code, code: input.code } });
+        return { success: true, code: input.code };
+      }),
       updateSchool: protectedProcedure
       .input(z.object({ name: z.string().min(3).max(180).optional(), phone: z.string().max(20).nullable().optional(), email: z.string().email().nullable().optional(), county: z.string().max(80).nullable().optional(), admissionPrefix: z.string().min(1).max(16).optional(), gradeScale: z.array(z.object({ min: z.number(), max: z.number(), grade: z.string().min(0).max(4), points: z.number().int().min(0).max(20), remark: z.string().max(120).optional() })).optional() }))
       .mutation(async ({ ctx, input }) => {

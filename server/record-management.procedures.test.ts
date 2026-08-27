@@ -228,6 +228,15 @@ describe("record-management procedures", () => {
     await expect(appRouter.createCaller(context("parent")).school.students.bulkUpdateEmails({ rows: [{ admissionNo: "ADM-001", email: "parent@example.com" }] })).rejects.toThrow();
   });
 
+  it("updates the learner login school code with normalization, duplicate protection, and audit coverage", async () => {
+    dbState.current = fakeDb(new Map([[schools, [{ id: 1, name: "Test School", code: "OLD-CODE" }, { id: 2, name: "Other School", code: "TAKEN" }]] ]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.setup.updateSchoolCode({ code: " new-code " })).resolves.toEqual({ success: true, code: "NEW-CODE" });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "school.login_code_updated", metadata: expect.objectContaining({ previousCode: "OLD-CODE", code: "NEW-CODE" }) }));
+    await expect(caller.school.setup.updateSchoolCode({ code: "TAKEN" })).rejects.toThrow("already used by another school");
+    await expect(appRouter.createCaller(context("parent")).school.setup.updateSchoolCode({ code: "PARENT-CODE" })).rejects.toThrow();
+  });
+
   it("blocks portal users from all protected record-management mutations", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]]]));
     const caller = appRouter.createCaller(context("parent"));
