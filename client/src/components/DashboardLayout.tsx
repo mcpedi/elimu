@@ -13,6 +13,7 @@ import { BRAND_LOGO_URL, BRAND_NAME, BRAND_TAGLINE } from "@/const";
 
 export const SECTION_TRANSITION_MS = 260;
 export function sectionTransitionDuration(reducedMotion: boolean) { return reducedMotion ? 0 : SECTION_TRANSITION_MS; }
+export function personnelGreeting(name: string | null | undefined, hour = new Date().getHours()) { const firstName = (name ?? "").trim().split(/\s+/)[0] || "there"; const period = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"; return `${period}, ${firstName}`; }
 
 export type NavigationItem = {
   id: string;
@@ -93,7 +94,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
           <div className="flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
               <Button variant="ghost" size="icon" className="rounded-xl lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu className="h-5 w-5" /></Button>
-              <div className="min-w-0"><p className="truncate text-lg font-semibold tracking-[-0.03em] text-[#143b31] dark:text-emerald-50">{activeLabel}</p>{subtitle ? <p className="hidden truncate text-xs text-slate-500 sm:block dark:text-slate-400">{subtitle}</p> : null}</div>
+              <div className="min-w-0"><p className="truncate text-sm font-semibold tracking-[-0.03em] text-[#143b31] dark:text-emerald-50 sm:text-lg">{activeId === "dashboard" ? personnelGreeting(user.name) : activeLabel}</p>{subtitle ? <p className="hidden truncate text-xs text-slate-500 sm:block dark:text-slate-400">{subtitle}</p> : null}</div>
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
               <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-xl text-slate-600 hover:bg-white hover:text-[#0d4437] dark:text-slate-300 dark:hover:bg-white/10" aria-label="Switch colour theme">{theme === "dark" ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}</Button>

@@ -237,3 +237,7 @@
 - [x] Let exam dates target all learners in Form 1, Form 2, Form 3, or Form 4, with school-scoped validation and display.
 - [x] Make audit entries open a detailed view showing the actor, action, entity, timestamp, and recorded metadata.
 - [x] Add regression coverage and responsive validation for subject-aware activity, form targeting, and audit details; save a checkpoint.
+
+- [x] Add a personalised greeting for signed-in personnel using their account name, with a safe fallback when no name is available.
+- [x] Keep the greeting role-aware, accessible, and responsive across the dashboard shell.
+- [x] Add regression coverage for name rendering and fallback behavior, validate the responsive layout, and save a checkpoint.
