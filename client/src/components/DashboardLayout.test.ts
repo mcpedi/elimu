@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SECTION_TRANSITION_MS, sectionTransitionDuration } from "./DashboardLayout";
+import { NOTIFICATION_REFRESH_INTERVAL_MS, SECTION_TRANSITION_MS, notificationBadgeLabel, sectionTransitionDuration } from "./DashboardLayout";
 
 describe("dashboard section transition", () => {
   it("uses a short branded transition duration", () => {
@@ -10,5 +10,12 @@ describe("dashboard section transition", () => {
 
   it("disables the transition duration when reduced motion is requested", () => {
     expect(sectionTransitionDuration(true)).toBe(0);
+  });
+
+  it("refreshes live notifications frequently and keeps the badge compact", () => {
+    expect(NOTIFICATION_REFRESH_INTERVAL_MS).toBe(10_000);
+    expect(notificationBadgeLabel(0)).toBe("0");
+    expect(notificationBadgeLabel(4)).toBe("4");
+    expect(notificationBadgeLabel(12)).toBe("9+");
   });
 });

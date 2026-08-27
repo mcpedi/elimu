@@ -10,6 +10,8 @@ import type { LucideIcon } from "lucide-react";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import StudentLoginCard from "@/components/StudentLoginCard";
 import { BRAND_LOGO_URL, BRAND_NAME, BRAND_TAGLINE } from "@/const";
+import LiveNotificationCenter from "./LiveNotificationCenter";
+export { NOTIFICATION_REFRESH_INTERVAL_MS, notificationBadgeLabel } from "./notification-utils";
 
 export const SECTION_TRANSITION_MS = 260;
 export function sectionTransitionDuration(reducedMotion: boolean) { return reducedMotion ? 0 : SECTION_TRANSITION_MS; }
@@ -99,7 +101,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
               <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-xl text-slate-600 hover:bg-white hover:text-[#0d4437] dark:text-slate-300 dark:hover:bg-white/10" aria-label="Switch colour theme">{theme === "dark" ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}</Button>
-              <Button variant="ghost" size="icon" className="relative rounded-xl text-slate-600 hover:bg-white hover:text-[#0d4437] dark:text-slate-300 dark:hover:bg-white/10" aria-label="Notifications"><Bell className="h-4.5 w-4.5" />{notificationCount ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#c48c31] ring-2 ring-[#f4f7f5] dark:ring-[#101b18]" /> : null}</Button>
+              <LiveNotificationCenter notificationCount={notificationCount} onNavigate={navigate} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><button className="ml-1 flex items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-white dark:hover:bg-white/10"><Avatar className="h-8 w-8 border border-[#d5a74b]/35"><AvatarFallback className="bg-[#e4bd69] text-xs font-bold text-[#17382f]">{initials}</AvatarFallback></Avatar><div className="hidden min-w-0 sm:block"><p className="max-w-32 truncate text-xs font-semibold">{user.name || "School user"}</p><p className="max-w-32 truncate text-[10px] font-medium capitalize text-slate-500 dark:text-slate-400">{user.role.replaceAll("_", " ")}</p></div><ChevronDown className="hidden h-3.5 w-3.5 text-slate-400 sm:block" /></button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 rounded-xl"><div className="px-3 py-2"><p className="text-sm font-medium">{user.name || "School user"}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{user.email || "No email available"}</p></div><DropdownMenuSeparator /><DropdownMenuItem className="cursor-pointer text-destructive focus:text-destructive" onClick={logout}><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem></DropdownMenuContent>

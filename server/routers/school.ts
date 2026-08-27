@@ -1217,14 +1217,30 @@ export const schoolRouter = router({
       return announcement;
     }),
     notifications: protectedProcedure.query(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      return db.select().from(notifications).where(eq(notifications.userId, ctx.user.id)).orderBy(desc(notifications.createdAt)).limit(30);
+      const { db, school } = await getOperatingSchool();
+      return db.select().from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(and(eq(notifications.userId, ctx.user.id), eq(users.schoolId, school.id))).orderBy(desc(notifications.createdAt)).limit(50).then(rows => rows.map(row => row.notifications));
+    }),
+    inbox: protectedProcedure.query(async ({ ctx }) => {
+      const { db, school } = await getOperatingSchool();
+      const filter = and(eq(notifications.userId, ctx.user.id), eq(users.id, ctx.user.id), eq(users.schoolId, school.id));
+      const [items, unread] = await Promise.all([
+        db.select({ id: notifications.id, title: notifications.title, body: notifications.body, link: notifications.link, isRead: notifications.isRead, createdAt: notifications.createdAt, announcementId: notifications.announcementId }).from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(filter).orderBy(desc(notifications.createdAt)).limit(50),
+        db.select({ count: sql<number>`count(*)` }).from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(and(filter, eq(notifications.isRead, false))),
+      ]);
+      return { items, unreadCount: Number(unread[0]?.count ?? 0) };
     }),
     markNotificationRead: protectedProcedure.input(z.object({ notificationId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { db, school } = await getOperatingSchool();
+      const [account] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, ctx.user.id), eq(users.schoolId, school.id))).limit(1);
+      if (!account) throw new TRPCError({ code: "FORBIDDEN", message: "Your school access is unavailable." });
       await db.update(notifications).set({ isRead: true }).where(and(eq(notifications.id, input.notificationId), eq(notifications.userId, ctx.user.id)));
+      return { success: true };
+    }),
+    markAllNotificationsRead: protectedProcedure.mutation(async ({ ctx }) => {
+      const { db, school } = await getOperatingSchool();
+      const [account] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, ctx.user.id), eq(users.schoolId, school.id))).limit(1);
+      if (!account) throw new TRPCError({ code: "FORBIDDEN", message: "Your school access is unavailable." });
+      await db.update(notifications).set({ isRead: true }).where(eq(notifications.userId, ctx.user.id));
       return { success: true };
     }),
   }),

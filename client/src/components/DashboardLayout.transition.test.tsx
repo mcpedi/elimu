@@ -15,6 +15,10 @@ vi.mock("@/contexts/ThemeContext", () => ({
   useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }),
 }));
 
+vi.mock("./LiveNotificationCenter", () => ({
+  default: () => <button aria-label="Notifications">Notifications</button>,
+}));
+
 describe("mounted dashboard section transition", () => {
   beforeEach(() => {
     vi.useFakeTimers();

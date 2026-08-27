@@ -280,3 +280,8 @@
 - [x] Add protected account-status procedures and synchronize linked user suspension state.
 - [x] Enforce the disabled-account login message in OAuth sessions and learner login.
 - [x] Add admin status controls, tests, visual validation, and a final checkpoint.
+
+- [x] Add protected live notification listing with unread counts and school/user isolation.
+- [x] Add read, mark-all-read, and live refresh behavior for notifications.
+- [x] Add a responsive notification center and header unread indicator.
+- [x] Add regression tests, visual validation, and a final notification checkpoint.
