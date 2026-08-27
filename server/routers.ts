@@ -1,5 +1,6 @@
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { TRPCError } from "@trpc/server";
+import { DISABLED_ACCOUNT_MESSAGE } from "./account-suspension";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { aiConversationMessages, aiConversations, notifications, schools, studentCredentials, students, users } from "../drizzle/schema";
@@ -150,6 +151,10 @@ export const appRouter = router({
     me: publicProcedure.query(opts => opts.ctx.user),
     loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
       const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
+      if (student?.disabledAt) {
+        await writeAuditLog({ schoolId: school.id, action: "student.login_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "account_disabled" } });
+        throw new TRPCError({ code: "UNAUTHORIZED", message: DISABLED_ACCOUNT_MESSAGE });
+      }
       if (!student || student.status === "inactive" || student.status === "transferred") {
         await writeAuditLog({ schoolId: school.id, action: "student.login_failed", entityType: "student_login", metadata: { username, reason: "unknown_or_inactive_learner" } });
         throw new TRPCError({ code: "UNAUTHORIZED", message: STUDENT_LOGIN_ERROR });

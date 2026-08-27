@@ -271,3 +271,12 @@
 - [x] Add a small branded Jacks Webs Solutions mark beside the existing footer credit.
 - [x] Keep the mark scalable, accessible, and readable in light/dark desktop and mobile layouts.
 - [x] Add regression coverage for footer mark rendering and sizing, validate the responsive shell, and save a checkpoint.
+
+- [x] Add leadership controls to temporarily disable and re-enable student and teacher accounts within the active school.
+- [x] Enforce school scoping, prevent unauthorised self/privileged-account changes, and audit every disable or re-enable action.
+- [x] Block disabled accounts at login with the exact guidance “Contact System Admin for help.” while preserving safe authentication behavior.
+- [x] Add regression coverage and responsive UI validation for disable, re-enable, authorization, login messaging, and audit details; validate and save a checkpoint.
+- [x] Add explicit student and teacher profile suspension fields and apply the database migration.
+- [x] Add protected account-status procedures and synchronize linked user suspension state.
+- [x] Enforce the disabled-account login message in OAuth sessions and learner login.
+- [x] Add admin status controls, tests, visual validation, and a final checkpoint.

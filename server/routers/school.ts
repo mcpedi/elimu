@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
+import { normalizeSuspensionReason } from "../account-suspension";
 import { z } from "zod";
 import {
   academicYears,
@@ -412,6 +413,36 @@ export const schoolRouter = router({
     };
   }),
 
+  accountStatus: router({
+    set: protectedProcedure.input(z.object({ accountType: z.enum(["student", "teacher"]), accountId: z.number().int().positive(), disabled: z.boolean(), reason: z.string().trim().max(255).optional() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const { db, school } = await getOperatingSchool();
+      const reason = normalizeSuspensionReason(input.reason);
+      if (input.accountType === "student") {
+        const [student] = await db.select().from(students).where(and(eq(students.id, input.accountId), eq(students.schoolId, school.id))).limit(1);
+        if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Student account not found in this school." });
+        if (student.userId) {
+          const [target] = await db.select({ id: users.id, role: users.role }).from(users).where(and(eq(users.id, student.userId), eq(users.schoolId, school.id))).limit(1);
+          if (target && ["super_admin", "principal", "deputy_principal"].includes(target.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Privileged administrator accounts cannot be disabled here." });
+          await db.update(users).set({ disabledAt: input.disabled ? new Date() : null, disabledReason: input.disabled ? reason : null }).where(and(eq(users.id, student.userId), eq(users.schoolId, school.id)));
+        }
+        await db.update(students).set({ disabledAt: input.disabled ? new Date() : null, disabledReason: input.disabled ? reason : null }).where(and(eq(students.id, student.id), eq(students.schoolId, school.id)));
+        await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: input.disabled ? "student.account_disabled" : "student.account_enabled", entityType: "student", entityId: student.id, metadata: { reason: input.disabled ? reason : null } });
+        return { success: true, accountType: input.accountType, accountId: student.id, disabled: input.disabled };
+      }
+      const [teacher] = await db.select().from(teachers).where(and(eq(teachers.id, input.accountId), eq(teachers.schoolId, school.id))).limit(1);
+      if (!teacher) throw new TRPCError({ code: "NOT_FOUND", message: "Teacher account not found in this school." });
+      if (teacher.userId) {
+        const [target] = await db.select({ id: users.id, role: users.role }).from(users).where(and(eq(users.id, teacher.userId), eq(users.schoolId, school.id))).limit(1);
+        if (target && ["super_admin", "principal", "deputy_principal"].includes(target.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Privileged administrator accounts cannot be disabled here." });
+        await db.update(users).set({ disabledAt: input.disabled ? new Date() : null, disabledReason: input.disabled ? reason : null }).where(and(eq(users.id, teacher.userId), eq(users.schoolId, school.id)));
+      }
+      await db.update(teachers).set({ disabledAt: input.disabled ? new Date() : null, disabledReason: input.disabled ? reason : null }).where(and(eq(teachers.id, teacher.id), eq(teachers.schoolId, school.id)));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: input.disabled ? "teacher.account_disabled" : "teacher.account_enabled", entityType: "teacher", entityId: teacher.id, metadata: { reason: input.disabled ? reason : null } });
+      return { success: true, accountType: input.accountType, accountId: teacher.id, disabled: input.disabled };
+    }),
+  }),
+
   students: router({
     list: protectedProcedure.input(z.object({ query: z.string().max(80).optional(), classId: z.number().int().positive().optional(), status: z.enum(["active", "transferred", "completed", "inactive"]).optional(), emailStatus: z.enum(["all", "linked", "missing"]).default("all") }).optional()).query(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal", "teacher", "class_teacher", "bursar"]);
@@ -433,7 +464,7 @@ export const schoolRouter = router({
       const base = and(...filters);
       const matcher = input?.query?.trim();
       return db
-        .select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, email: students.email, status: students.status, form: schoolClasses.form, stream: schoolClasses.stream, classId: students.currentClassId })
+        .select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, email: students.email, status: students.status, disabledAt: students.disabledAt, disabledReason: students.disabledReason, form: schoolClasses.form, stream: schoolClasses.stream, classId: students.currentClassId })
         .from(students)
         .leftJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id))
         .where(matcher ? and(base, or(like(students.firstName, `%${matcher}%`), like(students.lastName, `%${matcher}%`), like(students.admissionNo, `%${matcher}%`), like(students.email, `%${matcher}%`))) : base)
@@ -585,7 +616,7 @@ export const schoolRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
       const { db, school } = await getOperatingSchool();
-      return db.select({ id: teachers.id, employeeNo: teachers.employeeNo, firstName: teachers.firstName, lastName: teachers.lastName, phone: teachers.phone, email: teachers.email, status: teachers.employmentStatus, department: departments.name }).from(teachers).leftJoin(departments, eq(teachers.departmentId, departments.id)).where(eq(teachers.schoolId, school.id)).orderBy(asc(teachers.lastName));
+      return db.select({ id: teachers.id, employeeNo: teachers.employeeNo, firstName: teachers.firstName, lastName: teachers.lastName, phone: teachers.phone, email: teachers.email, status: teachers.employmentStatus, disabledAt: teachers.disabledAt, disabledReason: teachers.disabledReason, department: departments.name }).from(teachers).leftJoin(departments, eq(teachers.departmentId, departments.id)).where(eq(teachers.schoolId, school.id)).orderBy(asc(teachers.lastName));
     }),
     create: protectedProcedure.input(z.object({ employeeNo: z.string().min(2).max(40), firstName: z.string().min(1).max(80), lastName: z.string().min(1).max(80), phone: z.string().max(20).optional(), email: z.string().email().optional(), departmentId: z.number().int().positive().optional(), userId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);

@@ -47,6 +47,8 @@ export const users = mysqlTable("users", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  disabledAt: timestamp("disabledAt"),
+  disabledReason: varchar("disabledReason", { length: 255 }),
 });
 
 export type User = typeof users.$inferSelect;
@@ -110,6 +112,8 @@ export const teachers = mysqlTable("teachers", {
   email: varchar("email", { length: 320 }),
   departmentId: int("departmentId").references(() => departments.id),
   employmentStatus: mysqlEnum("employmentStatus", ["active", "on_leave", "inactive"]).notNull().default("active"),
+  disabledAt: timestamp("disabledAt"),
+  disabledReason: varchar("disabledReason", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => [
@@ -153,6 +157,8 @@ export const students = mysqlTable("students", {
   photoKey: varchar("photoKey", { length: 512 }),
   currentClassId: int("currentClassId").references(() => schoolClasses.id),
   status: mysqlEnum("status", ["active", "transferred", "completed", "inactive"]).notNull().default("active"),
+  disabledAt: timestamp("disabledAt"),
+  disabledReason: varchar("disabledReason", { length: 255 }),
   enrolledOn: date("enrolledOn").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

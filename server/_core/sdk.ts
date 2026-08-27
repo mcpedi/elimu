@@ -6,6 +6,7 @@ import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
+import { DISABLED_ACCOUNT_MESSAGE } from "../account-suspension";
 import { ENV } from "./env";
 import type {
   ExchangeTokenRequest,
@@ -309,6 +310,10 @@ class SDKServer {
 
     if (!user) {
       throw ForbiddenError("User not found");
+    }
+
+    if (user.disabledAt) {
+      throw ForbiddenError(DISABLED_ACCOUNT_MESSAGE);
     }
 
     await db.upsertUser({

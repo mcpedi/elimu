@@ -85,6 +85,20 @@
       "when": 1787822687121,
       "tag": "0011_pink_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1787867917848,
+      "tag": "0012_wet_la_nuit",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1787867972873,
+      "tag": "0013_bizarre_synch",
+      "breakpoints": true
     }
   ]
 }
