@@ -2,6 +2,8 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
 import { normalizeSuspensionReason } from "../account-suspension";
 import { z } from "zod";
+const notificationCategorySchema = z.enum(["finance", "academics", "announcements", "attendance", "account", "general"]);
+
 import {
   academicYears,
   announcements,
@@ -1242,6 +1244,13 @@ export const schoolRouter = router({
       if (!account) throw new TRPCError({ code: "FORBIDDEN", message: "Your school access is unavailable." });
       await db.update(notifications).set({ isRead: true }).where(eq(notifications.userId, ctx.user.id));
       return { success: true };
+    }),
+    clearNotificationCategory: protectedProcedure.input(z.object({ category: notificationCategorySchema })).mutation(async ({ ctx, input }) => {
+      const { db, school } = await getOperatingSchool();
+      const [account] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, ctx.user.id), eq(users.schoolId, school.id))).limit(1);
+      if (!account) throw new TRPCError({ code: "FORBIDDEN", message: "Your school access is unavailable." });
+      await db.delete(notifications).where(and(eq(notifications.userId, ctx.user.id), eq(notifications.category, input.category)));
+      return { success: true, category: input.category };
     }),
   }),
 

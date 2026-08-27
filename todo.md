@@ -290,3 +290,8 @@
 - [x] Persist and expose notification category metadata with a safe migration.
 - [x] Render distinct category labels, colors, and icons in the live notification center.
 - [x] Add category regression tests, responsive visual validation, and a checkpoint.
+
+- [x] Preserve and verify the existing Mark all read notification action.
+- [x] Add protected category-specific notification clearing with user and school isolation.
+- [x] Add category clear controls with confirmation and empty-state feedback.
+- [x] Add regression tests, responsive visual validation, and a checkpoint.
