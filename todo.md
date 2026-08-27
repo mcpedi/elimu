@@ -180,3 +180,7 @@
 - [x] Define the authorised learner-summary print content using only details already available in the protected in-app record dialog.
 - [x] Add a branded Print / save PDF action to the learner detail dialog and handle blocked pop-ups clearly.
 - [x] Add regression coverage for summary rendering and validate type checks, tests, responsive shell, and a recovery checkpoint.
+
+- [x] Define selectable learner-summary sections that use only the existing authorised detail payload and preserve a useful default selection.
+- [x] Add responsive section selectors in the learner detail dialog and generate a branded print document containing only selected sections.
+- [x] Add document-output regressions for selected and excluded sections; validate type checks, full tests, responsive shell, and checkpoint.

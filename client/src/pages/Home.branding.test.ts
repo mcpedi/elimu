@@ -46,4 +46,20 @@ describe("school branding", () => {
     expect(html).toContain("Outstanding fee balance");
     expect(html).toContain("schools/1/branding/logo.png");
   });
+
+  it("includes only the learner-summary sections selected for printing", () => {
+    const html = learnerSummaryPrintable({
+      student: { firstName: "Akinyi", lastName: "Otieno", admissionNo: "ONY-001", status: "active" },
+      guardians: [{ firstName: "Mary", lastName: "Otieno", relationship: "Mother", phone: "+254700000001" }],
+      subjects: [{ code: "MAT", name: "Mathematics" }],
+      attendance: [{ status: "present" }],
+      feeAccounts: [{ name: "Tuition", amountDue: "12000", amountPaid: "5000", status: "partial" }],
+      marks: [{ subject: "Mathematics", assessment: "Term 2 Exam", score: "76", grade: "B+" }],
+    }, { name: "Onyalo Secondary School" }, ["profile", "results"]);
+    expect(html).toContain("Profile & class");
+    expect(html).toContain("Recent results");
+    expect(html).not.toContain("Guardian contacts");
+    expect(html).not.toContain("Outstanding fee balance");
+    expect(html).not.toContain("<h2>Attendance</h2>");
+  });
 });
