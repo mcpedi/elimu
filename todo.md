@@ -211,3 +211,8 @@
 - [x] Add a secure school-scoped admin workflow to link, update, or clear a learner email on the student profile.
 - [x] Validate learner email format and school-local uniqueness, and audit every email-link change without exposing unrelated schools.
 - [x] Add responsive admin controls and regression coverage for authorization, validation, uniqueness, clearing, and learner-profile visibility; validate and save a checkpoint.
+
+- [x] Add an optional school-scoped learner recovery notice workflow using the linked email, with safe delivery status and audit logging.
+- [x] Extend the Students search to match linked learner email addresses without weakening tenant isolation.
+- [x] Add bulk learner-email import with admission-number matching, format validation, school-local duplicate detection, partial-error reporting, and audit coverage.
+- [x] Add responsive controls, regression tests, and validation for recovery notices, email search, and bulk email import; save a checkpoint.

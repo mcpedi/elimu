@@ -2,7 +2,7 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { schools, studentCredentials, students, users } from "../drizzle/schema";
+import { notifications, schools, studentCredentials, students, users } from "../drizzle/schema";
 import { createStudentResetCode, hashStudentSecret, normalizeStudentIdentifier, normalizeStudentUsernameInput, STUDENT_LOGIN_LOCK_MS, STUDENT_LOGIN_MAX_ATTEMPTS, STUDENT_RESET_TTL_MS, verifyStudentSecret } from "./student-auth";
 import { getDb, writeAuditLog } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -95,7 +95,7 @@ export const appRouter = router({
       await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } } as const;
     }),
-    issueStudentPasswordResetCode: protectedProcedure.input(z.object({ studentId: studentIdSchema })).mutation(async ({ ctx, input }) => {
+    issueStudentPasswordResetCode: protectedProcedure.input(z.object({ studentId: studentIdSchema, sendNotice: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database service is unavailable." });
@@ -109,8 +109,10 @@ export const appRouter = router({
       const [existing] = await db.select().from(studentCredentials).where(eq(studentCredentials.studentId, student.id)).limit(1);
       if (existing) await db.update(studentCredentials).set({ activationCodeHash: resetCodeHash, activationCodeExpiresAt: resetExpiresAt, failedAttempts: 0, lockedUntil: null }).where(eq(studentCredentials.studentId, student.id));
       else await db.insert(studentCredentials).values({ studentId: student.id, passwordHash: null, passwordMode: "legacy_activation", activationCodeHash: resetCodeHash, activationCodeExpiresAt: resetExpiresAt, failedAttempts: 0, lockedUntil: null });
-      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.password_reset_code_issued", entityType: "student", entityId: student.id, metadata: { admissionNo: student.admissionNo, expiresAt: resetExpiresAt.toISOString(), delivery: "school_office" } });
-      return { success: true, resetCode, expiresAt: resetExpiresAt, student: { id: student.id, name: `${student.firstName} ${student.lastName}`, admissionNo: student.admissionNo } } as const;
+      const noticeSent = Boolean(input.sendNotice && student.email && student.userId);
+      if (noticeSent) await db.insert(notifications).values({ userId: student.userId!, title: "Account recovery support is available", body: "Your school has prepared account recovery support. Contact the school office for the one-time reset code and keep it private.", link: "/" });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.password_reset_code_issued", entityType: "student", entityId: student.id, metadata: { admissionNo: student.admissionNo, expiresAt: resetExpiresAt.toISOString(), delivery: "school_office", noticeRequested: input.sendNotice, noticeSent, noticeEmail: student.email ?? null } });
+      return { success: true, resetCode, expiresAt: resetExpiresAt, notice: { requested: input.sendNotice, sent: noticeSent, email: student.email ?? null }, student: { id: student.id, name: `${student.firstName} ${student.lastName}`, admissionNo: student.admissionNo } } as const;
     }),
     resetStudentPassword: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, resetCode: studentResetCodeSchema, newPassword: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
       if (input.newPassword !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });

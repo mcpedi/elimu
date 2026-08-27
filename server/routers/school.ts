@@ -419,10 +419,10 @@ export const schoolRouter = router({
       const base = and(...filters);
       const matcher = input?.query?.trim();
       return db
-        .select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, status: students.status, form: schoolClasses.form, stream: schoolClasses.stream, classId: students.currentClassId })
+        .select({ id: students.id, admissionNo: students.admissionNo, firstName: students.firstName, middleName: students.middleName, lastName: students.lastName, email: students.email, status: students.status, form: schoolClasses.form, stream: schoolClasses.stream, classId: students.currentClassId })
         .from(students)
         .leftJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id))
-        .where(matcher ? and(base, or(like(students.firstName, `%${matcher}%`), like(students.lastName, `%${matcher}%`), like(students.admissionNo, `%${matcher}%`))) : base)
+        .where(matcher ? and(base, or(like(students.firstName, `%${matcher}%`), like(students.lastName, `%${matcher}%`), like(students.admissionNo, `%${matcher}%`), like(students.email, `%${matcher}%`))) : base)
         .orderBy(asc(students.lastName), asc(students.firstName))
         .limit(200);
     }),
@@ -478,6 +478,35 @@ export const schoolRouter = router({
       await db.update(students).set({ email: normalizedEmail }).where(and(eq(students.id, student.id), eq(students.schoolId, school.id)));
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.email_updated", entityType: "student", entityId: student.id, metadata: { previousEmail: student.email ?? null, email: normalizedEmail, cleared: normalizedEmail === null } });
       return { success: true, email: normalizedEmail };
+    }),
+    bulkUpdateEmails: protectedProcedure.input(z.object({ rows: z.array(z.object({ admissionNo: z.string().trim().min(2).max(40), email: z.string().trim().email("Enter a valid learner email address.").max(320) })).min(1).max(500) })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      const { db, school } = await getOperatingSchool();
+      const normalizedRows = input.rows.map((row, index) => ({ row: index + 2, admissionNo: row.admissionNo.trim().toUpperCase(), email: row.email.trim().toLowerCase() }));
+      const admissionNos = Array.from(new Set(normalizedRows.map(row => row.admissionNo)));
+      const studentRows = await db.select({ id: students.id, admissionNo: students.admissionNo, email: students.email }).from(students).where(and(eq(students.schoolId, school.id), inArray(students.admissionNo, admissionNos)));
+      const byAdmission = new Map(studentRows.map(row => [row.admissionNo.toUpperCase(), row]));
+      const emailOwners = new Map<string, number>();
+      const allLinked = await db.select({ id: students.id, email: students.email }).from(students).where(and(eq(students.schoolId, school.id), isNotNull(students.email))).limit(1000);
+      allLinked.forEach(row => { if (row.email) emailOwners.set(row.email.trim().toLowerCase(), row.id); });
+      const seenAdmissions = new Set<string>();
+      const seenEmails = new Set<string>();
+      const errors: Array<{ row: number; message: string }> = [];
+      const validRows: Array<{ studentId: number; admissionNo: string; email: string }> = [];
+      for (const item of normalizedRows) {
+        const student = byAdmission.get(item.admissionNo);
+        if (seenAdmissions.has(item.admissionNo)) { errors.push({ row: item.row, message: "duplicate admission number in import" }); continue; }
+        seenAdmissions.add(item.admissionNo);
+        if (!student) { errors.push({ row: item.row, message: "admission number was not found in this school" }); continue; }
+        if (seenEmails.has(item.email)) { errors.push({ row: item.row, message: "duplicate email in import" }); continue; }
+        seenEmails.add(item.email);
+        const owner = emailOwners.get(item.email);
+        if (owner && owner !== student.id) { errors.push({ row: item.row, message: "email is already linked to another learner in this school" }); continue; }
+        validRows.push({ studentId: student.id, admissionNo: student.admissionNo, email: item.email });
+      }
+      for (const item of validRows) await db.update(students).set({ email: item.email }).where(and(eq(students.id, item.studentId), eq(students.schoolId, school.id)));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.emails_bulk_updated", entityType: "student_email_import", metadata: { updated: validRows.length, rejected: errors.length, admissions: validRows.map(item => item.admissionNo), errorRows: errors.map(error => error.row) } });
+      return { updated: validRows.length, errors };
     }),
     linkStudentAccount: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal"]);

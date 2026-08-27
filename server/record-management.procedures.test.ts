@@ -218,6 +218,16 @@ describe("record-management procedures", () => {
     await expect(caller.school.students.updateStudentEmail({ studentId: 13, email: "foreign-update@example.com" })).rejects.toThrow("Student not found");
   });
 
+  it("bulk-links learner emails by admission number with duplicate validation and partial feedback", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, schoolId: 1, admissionNo: "ADM-001", email: null }, { id: 12, schoolId: 1, admissionNo: "ADM-002", email: "used@example.com" }, { id: 13, schoolId: 1, admissionNo: "ADM-003", email: null }]] ]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    const result = await caller.school.students.bulkUpdateEmails({ rows: [{ admissionNo: "adm-001", email: "Learner@Example.com" }, { admissionNo: "ADM-001", email: "second@example.com" }, { admissionNo: "ADM-003", email: "used@example.com" }, { admissionNo: "ADM-404", email: "missing@example.com" }] });
+    expect(result.updated).toBe(1);
+    expect(result.errors).toEqual(expect.arrayContaining([expect.objectContaining({ row: 3, message: "duplicate admission number in import" }), expect.objectContaining({ row: 4, message: "email is already linked to another learner in this school" }), expect.objectContaining({ row: 5, message: "admission number was not found in this school" })]));
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.emails_bulk_updated", metadata: expect.objectContaining({ updated: 1, rejected: 3 }) }));
+    await expect(appRouter.createCaller(context("parent")).school.students.bulkUpdateEmails({ rows: [{ admissionNo: "ADM-001", email: "parent@example.com" }] })).rejects.toThrow();
+  });
+
   it("blocks portal users from all protected record-management mutations", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]]]));
     const caller = appRouter.createCaller(context("parent"));
