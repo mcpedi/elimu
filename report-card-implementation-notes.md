@@ -75,3 +75,11 @@ The Academics workspace now includes an academic-year and term-scoped view that 
 
 ## Per-class term trend charts — 2026-08-27
 The Academics performance view now loads all configured classes for a selected academic year and displays each class as a responsive compact bar chart across its chronological terms. Every point shows normalized average percentage, mean grade, and mark count; terms with no marks remain visible as an em dash rather than being silently dropped. The protected endpoint validates the school-owned academic year, uses the authenticated tenant, and returns no cross-school rows. Shared trend tests cover chronological output and empty terms. Type checking and the full 95-test suite pass. Desktop and 375 px mobile dashboard-shell screenshots remain stable.
+
+
+## Class-to-class comparison mode — 2026-08-27
+The Academics trend area now offers a bounded comparison mode that lets leadership select two to four school classes and compare their normalized term-average percentages on a shared scale. Selected classes are represented together for each chronological term, with consistent color assignment, visible percentage labels, and em dashes for missing term data. The mode uses the existing all-class, school-scoped trend response and adds no cross-tenant query. The final type check and full 95-test suite pass. Desktop and 375 px mobile shell screenshots remain stable after the comparison controls were added.
+
+
+## Class-to-class comparison mode — 2026-08-27
+Leadership can now select two to four classes from the existing school-scoped term-trend response and compare their normalized average percentages term by term on a shared scale. The responsive comparison rows include class labels, consistent color bands, percentage values, and visible missing-data markers. The selection limit prevents an overcrowded chart, while the original per-class charts remain available. Type checking and the full 95-test suite pass. Desktop and 375 px mobile screenshots confirm the dashboard shell and navigation remain stable after the comparison controls were integrated.

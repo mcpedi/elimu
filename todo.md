@@ -194,3 +194,8 @@
 - [x] Add a protected multi-term performance aggregation procedure with academic-year and term validation.
 - [x] Build responsive per-class trend charts in the Academics performance workspace.
 - [x] Add regression coverage for trend calculations, empty terms, authorization, and tenant isolation; validate and save a checkpoint.
+
+- [x] Define school-scoped comparison limits and normalized trend metrics for selected classes.
+- [x] Add a protected comparison aggregation procedure with same-year validation and deterministic class ordering.
+- [x] Build responsive class selectors and a comparative multi-series trend visualization.
+- [x] Add regression coverage for comparison calculations, selection limits, empty terms, authorization, and tenant isolation; validate and save a checkpoint.
