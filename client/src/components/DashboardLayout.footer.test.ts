@@ -6,6 +6,9 @@ describe("Dashboard footer credit", () => {
     const source = await readFile(new URL("./DashboardLayout.tsx", import.meta.url), "utf8");
     expect(source).toContain("Designed by Jacks Webs Solutions");
     expect(source).toContain('aria-label="System designer credit"');
+    expect(source).toContain("viewBox=\"0 0 24 24\"");
+    expect(source).toContain("aria-hidden=\"true\"");
+    expect(source).toContain("h-5 w-5");
     expect(source).toContain("text-center");
   });
 });

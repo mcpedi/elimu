@@ -267,3 +267,7 @@
 - [x] Add the footer credit “Designed by Jacks Webs Solutions” to the dashboard shell.
 - [x] Keep the credit discreet, accessible, and readable across desktop and mobile layouts.
 - [x] Add regression coverage for footer rendering, validate the responsive shell, and save a checkpoint.
+
+- [x] Add a small branded Jacks Webs Solutions mark beside the existing footer credit.
+- [x] Keep the mark scalable, accessible, and readable in light/dark desktop and mobile layouts.
+- [x] Add regression coverage for footer mark rendering and sizing, validate the responsive shell, and save a checkpoint.
