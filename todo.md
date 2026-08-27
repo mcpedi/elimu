@@ -241,3 +241,7 @@
 - [x] Add a personalised greeting for signed-in personnel using their account name, with a safe fallback when no name is available.
 - [x] Keep the greeting role-aware, accessible, and responsive across the dashboard shell.
 - [x] Add regression coverage for name rendering and fallback behavior, validate the responsive layout, and save a checkpoint.
+
+- [x] Display a readable signed-in user role beneath the personalized greeting in the dashboard header.
+- [x] Keep the role label visible, accessible, and responsive on mobile without exposing extra account data.
+- [x] Add regression coverage for role formatting and greeting/header rendering, validate mobile layout, and save a checkpoint.
