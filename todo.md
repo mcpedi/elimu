@@ -217,9 +217,9 @@
 - [x] Add bulk learner-email import with admission-number matching, format validation, school-local duplicate detection, partial-error reporting, and audit coverage.
 - [x] Add responsive controls, regression tests, and validation for recovery notices, email search, and bulk email import; save a checkpoint.
 
-- [ ] Connect a transactional email provider for learner recovery notices with a server-only delivery helper.
-- [ ] Add secure provider configuration and sender settings, with clear delivery failure status and no reset-code disclosure.
-- [ ] Add provider mocking/tests for successful delivery, missing configuration, upstream failure, tenant authorization, and audit behavior; validate and save a checkpoint.
+- [x] Connect a transactional email provider for learner recovery notices with a server-only delivery helper. Not applicable: user chose to keep recovery notices in-app only.
+- [x] Add secure provider configuration and sender settings, with clear delivery failure status and no reset-code disclosure. Not applicable: no external provider will be configured.
+- [x] Add provider mocking/tests for successful delivery, missing configuration, upstream failure, tenant authorization, and audit behavior; validate and save a checkpoint. Not applicable: external delivery was declined.
 
 - [x] Add an authorised Students workspace filter for all learners, learners with linked emails, or learners without linked emails.
 - [x] Keep email-presence filtering school-scoped and compatible with name, admission-number, and email search.
