@@ -255,3 +255,7 @@
 - [x] Add protected procedures to list, create, resume, rename, and append messages to a user’s own conversations.
 - [x] Add responsive history controls with new chat, resume, rename, empty, loading, and error states.
 - [x] Add regression coverage for user/school isolation, ordering, message persistence, rename behavior, and responsive history controls; validate and save a checkpoint.
+
+- [x] Add a bottom-right AI assistant launcher and responsive landing-page chat widget.
+- [x] Prevent blank or incomplete AI replies with bounded retry, continuation guidance, and clear fallback errors while preserving conversation history.
+- [x] Add regression coverage for widget placement, response extraction, blank/truncated responses, retry behavior, and mobile layout; validate and save a checkpoint.
