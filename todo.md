@@ -203,3 +203,7 @@
 - [x] Diagnose and repair the authorised pre-publication report-card preview flow without publishing or creating an export audit.
 - [x] Include the learner’s current balance in school-scoped fee-receipt data and branded printable output.
 - [x] Add regression coverage for preview visibility, receipt balance calculation, authorization, and tenant isolation; validate responsively and save a checkpoint.
+
+- [x] Define the authorised receipt preview fields and ensure previewing does not create a document audit until printing or saving.
+- [x] Add a responsive in-app receipt preview with learner, payment, and remaining-balance details plus a print handoff.
+- [x] Add regression coverage for preview contents, balance visibility, authorization, and print-audit behavior; validate and save a checkpoint.

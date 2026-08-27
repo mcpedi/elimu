@@ -87,3 +87,7 @@ Leadership can now select two to four classes from the existing school-scoped te
 
 ## Report-card preview and receipt balance repair — 2026-08-27
 The report-card workflow now refreshes its protected preview automatically once class, year, term, and learner are selected, while retaining the explicit Preview action. Preview failures are shown inline instead of failing silently, and the save action is labelled as a draft save so publication remains a separate step. Payment-receipt data now includes the balance remaining on the associated fee account after the recorded payment, and the branded receipt prints it as “Balance remaining.” The new receipt regression asserts the balance calculation. Type checking and the full 95-test suite pass. Desktop and 375 px mobile dashboard screenshots remain stable after the repair.
+
+
+## Report-card preview and receipt balance repair — 2026-08-27
+The report-card workflow now refreshes its protected preview automatically after selecting class, year, term, and learner, shows inline server errors instead of failing silently, and labels the save action as a draft save so publication remains separate. Payment-receipt data now includes the balance remaining on the associated fee account, and the branded receipt prints it clearly. The receipt regression asserts the balance value. Type checking and the complete 95-test suite pass. Desktop and 375 px mobile dashboard screenshots remain stable after the repair.
