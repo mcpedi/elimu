@@ -399,7 +399,7 @@ export const schoolRouter = router({
       db.select({ amount: sql<string>`coalesce(sum(${payments.amount}), 0)` }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).where(eq(students.schoolId, school.id)),
       db.select({ due: studentFeeAccounts.amountDue, paid: studentFeeAccounts.amountPaid }).from(studentFeeAccounts).innerJoin(students, eq(studentFeeAccounts.studentId, students.id)).where(eq(students.schoolId, school.id)),
       db.select({ id: payments.id, amount: payments.amount, method: payments.method, receiptNo: payments.receiptNo, paymentDate: payments.paymentDate, firstName: students.firstName, lastName: students.lastName }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).where(eq(students.schoolId, school.id)).orderBy(desc(payments.createdAt)).limit(6),
-      db.select({ id: marks.id, grade: marks.grade, score: marks.score, assessment: assessments.title, firstName: students.firstName, lastName: students.lastName }).from(marks).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).innerJoin(students, eq(marks.studentId, students.id)).where(eq(students.schoolId, school.id)).orderBy(desc(marks.enteredAt)).limit(6),
+      db.select({ id: marks.id, grade: marks.grade, score: marks.score, maxMarks: assessments.maxMarks, assessment: assessments.title, subject: subjects.name, subjectCode: subjects.code, classForm: schoolClasses.form, classStream: schoolClasses.stream, firstName: students.firstName, lastName: students.lastName }).from(marks).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).innerJoin(students, eq(marks.studentId, students.id)).innerJoin(subjects, eq(marks.subjectId, subjects.id)).leftJoin(schoolClasses, eq(assessments.classId, schoolClasses.id)).where(eq(students.schoolId, school.id)).orderBy(desc(marks.enteredAt)).limit(6),
     ]);
     const outstanding = outstandingRows.reduce((sum, row) => sum + Math.max(0, Number(row.due) - Number(row.paid)), 0);
     return {
@@ -767,13 +767,18 @@ export const schoolRouter = router({
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "teacher.assignment_created", entityType: "teacherAssignment", metadata: input });
       return { success: true };
     }),
-    createAssessment: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), title: z.string().min(2).max(140), assessmentType: z.enum(["exam", "test", "assignment"]), maxMarks: z.number().positive().max(1000).default(100), assessmentDate: dateSchema })).mutation(async ({ ctx, input }) => {
+    createAssessment: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive().optional(), targetForm: z.enum(["Form 1", "Form 2", "Form 3", "Form 4"]).optional(), title: z.string().trim().min(2).max(140), assessmentType: z.enum(["exam", "test", "assignment"]), maxMarks: z.number().positive().max(1000).default(100), assessmentDate: dateSchema }).refine(input => Boolean(input.classId) !== Boolean(input.targetForm), { message: "Choose one class or one form audience." })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);
       const { db, school } = await getOperatingSchool();
-      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
-      await db.insert(assessments).values({ schoolId: school.id, academicYearId: input.academicYearId, termId: input.termId, classId: input.classId, title: input.title, assessmentType: input.assessmentType, maxMarks: String(input.maxMarks), assessmentDate: toDate(input.assessmentDate), createdByUserId: ctx.user.id });
-      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "assessment.created", entityType: "assessment", metadata: { classId: input.classId, title: input.title } });
-      return { success: true };
+      if (input.targetForm && !administrativeRoles.includes(ctx.user.role as (typeof administrativeRoles)[number])) throw new TRPCError({ code: "FORBIDDEN", message: "Only school leadership can schedule an assessment for an entire form." });
+      const classRows = input.targetForm
+        ? await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.schoolId, school.id), eq(schoolClasses.form, input.targetForm)))
+        : await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.schoolId, school.id), eq(schoolClasses.id, input.classId!))).limit(1);
+      if (!classRows.length) throw new TRPCError({ code: "NOT_FOUND", message: "No matching class groups were found in your school." });
+      if (!input.targetForm) await assertTeacherAssignment(ctx.user.id, ctx.user.role, classRows[0].id);
+      await Promise.all(classRows.map(classRow => db.insert(assessments).values({ schoolId: school.id, academicYearId: input.academicYearId, termId: input.termId, classId: classRow.id, title: input.title, assessmentType: input.assessmentType, maxMarks: String(input.maxMarks), assessmentDate: toDate(input.assessmentDate), createdByUserId: ctx.user.id })));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "assessment.created", entityType: "assessment", metadata: { classIds: classRows.map(row => row.id), targetForm: input.targetForm ?? null, title: input.title, assessmentDate: input.assessmentDate } });
+      return { success: true, count: classRows.length, targetForm: input.targetForm ?? null };
     }),
     assessmentList: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);

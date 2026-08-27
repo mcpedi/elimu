@@ -232,3 +232,8 @@
 - [x] Add a printable learner-login instruction sheet using the current school name, code, login address, and safe learner guidance.
 - [x] Add preview and print/save-PDF controls under School configuration without exposing administrator-only data.
 - [x] Add regression coverage for escaped document content, school-code inclusion, print handoff, and responsive controls; validate and save a checkpoint.
+
+- [x] Show specific subject and marks context in academic activity entries instead of only the assessment title.
+- [x] Let exam dates target all learners in Form 1, Form 2, Form 3, or Form 4, with school-scoped validation and display.
+- [x] Make audit entries open a detailed view showing the actor, action, entity, timestamp, and recorded metadata.
+- [x] Add regression coverage and responsive validation for subject-aware activity, form targeting, and audit details; save a checkpoint.

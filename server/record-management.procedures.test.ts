@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { departments, schoolClasses, schools, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments, users } from "../drizzle/schema";
+import { departments, schoolClasses, schools, assessments, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -235,6 +235,16 @@ describe("record-management procedures", () => {
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "school.login_code_updated", metadata: expect.objectContaining({ previousCode: "OLD-CODE", code: "NEW-CODE" }) }));
     await expect(caller.school.setup.updateSchoolCode({ code: "TAKEN" })).rejects.toThrow("already used by another school");
     await expect(appRouter.createCaller(context("parent")).school.setup.updateSchoolCode({ code: "PARENT-CODE" })).rejects.toThrow();
+  });
+
+  it("creates one assessment per stream for a form-wide exam target and audits the target form", async () => {
+    const classes = [{ id: 11, schoolId: 1, form: "Form 1", stream: "East" }, { id: 12, schoolId: 1, form: "Form 1", stream: "West" }];
+    dbState.current = fakeDb(new Map([[schools, [{ ...school, code: "TST" }]], [schoolClasses, classes], [assessments, []]]));
+    const result = await appRouter.createCaller(context("super_admin")).school.academics.createAssessment({ academicYearId: 1, termId: 1, targetForm: "Form 1", title: "Mid Term Exam", assessmentType: "exam", maxMarks: 100, assessmentDate: "2026-05-14" });
+    expect(result).toEqual({ success: true, count: 2, targetForm: "Form 1" });
+    expect(dbState.current).toBeTruthy();
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "assessment.created", metadata: expect.objectContaining({ targetForm: "Form 1", assessmentDate: "2026-05-14", classIds: [11, 12] }) }));
+    await expect(appRouter.createCaller(context("teacher")).school.academics.createAssessment({ academicYearId: 1, termId: 1, targetForm: "Form 1", title: "Teacher Form Exam", assessmentType: "exam", maxMarks: 100, assessmentDate: "2026-05-15" })).rejects.toThrow("Only school leadership");
   });
 
   it("blocks portal users from all protected record-management mutations", async () => {
