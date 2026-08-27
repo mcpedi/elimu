@@ -199,3 +199,7 @@
 - [x] Add a protected comparison aggregation procedure with same-year validation and deterministic class ordering.
 - [x] Build responsive class selectors and a comparative multi-series trend visualization.
 - [x] Add regression coverage for comparison calculations, selection limits, empty terms, authorization, and tenant isolation; validate and save a checkpoint.
+
+- [x] Diagnose and repair the authorised pre-publication report-card preview flow without publishing or creating an export audit.
+- [x] Include the learner’s current balance in school-scoped fee-receipt data and branded printable output.
+- [x] Add regression coverage for preview visibility, receipt balance calculation, authorization, and tenant isolation; validate responsively and save a checkpoint.

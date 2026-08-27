@@ -83,3 +83,7 @@ The Academics trend area now offers a bounded comparison mode that lets leadersh
 
 ## Class-to-class comparison mode — 2026-08-27
 Leadership can now select two to four classes from the existing school-scoped term-trend response and compare their normalized average percentages term by term on a shared scale. The responsive comparison rows include class labels, consistent color bands, percentage values, and visible missing-data markers. The selection limit prevents an overcrowded chart, while the original per-class charts remain available. Type checking and the full 95-test suite pass. Desktop and 375 px mobile screenshots confirm the dashboard shell and navigation remain stable after the comparison controls were integrated.
+
+
+## Report-card preview and receipt balance repair — 2026-08-27
+The report-card workflow now refreshes its protected preview automatically once class, year, term, and learner are selected, while retaining the explicit Preview action. Preview failures are shown inline instead of failing silently, and the save action is labelled as a draft save so publication remains a separate step. Payment-receipt data now includes the balance remaining on the associated fee account after the recorded payment, and the branded receipt prints it as “Balance remaining.” The new receipt regression asserts the balance calculation. Type checking and the full 95-test suite pass. Desktop and 375 px mobile dashboard screenshots remain stable after the repair.
