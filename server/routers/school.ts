@@ -1212,7 +1212,7 @@ export const schoolRouter = router({
         const recipientStudents = await db.select({ userId: students.userId }).from(students).leftJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id)).where(and(eq(students.schoolId, school.id), ...(input.targetScope === "class" && input.targetClassId ? [eq(students.currentClassId, input.targetClassId)] : []), ...(input.targetScope === "form" && input.targetForm ? [eq(schoolClasses.form, input.targetForm)] : []), sql`${students.userId} is not null`));
         recipients = recipientStudents.map(row => row.userId).filter((id): id is number => id !== null);
       }
-      if (announcement && recipients.length) await db.insert(notifications).values(recipients.map(userId => ({ userId, announcementId: announcement.id, title: announcement.title, body: announcement.body, link: "/" })));
+      if (announcement && recipients.length) await db.insert(notifications).values(recipients.map(userId => ({ userId, announcementId: announcement.id, category: "announcements" as const, title: announcement.title, body: announcement.body, link: "/" })));
       await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "announcement.published", entityType: "announcement", entityId: announcement?.id, metadata: { targetScope: input.targetScope } });
       return announcement;
     }),
@@ -1224,7 +1224,7 @@ export const schoolRouter = router({
       const { db, school } = await getOperatingSchool();
       const filter = and(eq(notifications.userId, ctx.user.id), eq(users.id, ctx.user.id), eq(users.schoolId, school.id));
       const [items, unread] = await Promise.all([
-        db.select({ id: notifications.id, title: notifications.title, body: notifications.body, link: notifications.link, isRead: notifications.isRead, createdAt: notifications.createdAt, announcementId: notifications.announcementId }).from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(filter).orderBy(desc(notifications.createdAt)).limit(50),
+        db.select({ id: notifications.id, category: notifications.category, title: notifications.title, body: notifications.body, link: notifications.link, isRead: notifications.isRead, createdAt: notifications.createdAt, announcementId: notifications.announcementId }).from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(filter).orderBy(desc(notifications.createdAt)).limit(50),
         db.select({ count: sql<number>`count(*)` }).from(notifications).innerJoin(users, eq(notifications.userId, users.id)).where(and(filter, eq(notifications.isRead, false))),
       ]);
       return { items, unreadCount: Number(unread[0]?.count ?? 0) };

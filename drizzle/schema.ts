@@ -440,6 +440,7 @@ export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().references(() => users.id),
   announcementId: int("announcementId").references(() => announcements.id),
+  category: mysqlEnum("category", ["finance", "academics", "announcements", "attendance", "account", "general"]).notNull().default("general"),
   title: varchar("title", { length: 180 }).notNull(),
   body: text("body").notNull(),
   link: varchar("link", { length: 255 }),

@@ -1,0 +1,1 @@
+ALTER TABLE `notifications` ADD `category` enum('finance','academics','announcements','attendance','account','general') DEFAULT 'general' NOT NULL;

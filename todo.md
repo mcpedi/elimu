@@ -285,3 +285,8 @@
 - [x] Add read, mark-all-read, and live refresh behavior for notifications.
 - [x] Add a responsive notification center and header unread indicator.
 - [x] Add regression tests, visual validation, and a final notification checkpoint.
+
+- [x] Define finance, academics, announcements, attendance, account, and general notification categories.
+- [x] Persist and expose notification category metadata with a safe migration.
+- [x] Render distinct category labels, colors, and icons in the live notification center.
+- [x] Add category regression tests, responsive visual validation, and a checkpoint.
