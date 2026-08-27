@@ -189,3 +189,8 @@
 - [x] Add a protected academic-performance aggregation procedure scoped to selected academic year and term, with class and subject validation.
 - [x] Build a responsive Academics performance view showing every class summary and ordered subject results.
 - [x] Add regression coverage for calculations, empty data, ties, invalid scope, role authorization, and tenant isolation; validate and save a checkpoint.
+
+- [x] Define school-scoped term-over-term metrics and chart behavior for each configured class.
+- [x] Add a protected multi-term performance aggregation procedure with academic-year and term validation.
+- [x] Build responsive per-class trend charts in the Academics performance workspace.
+- [x] Add regression coverage for trend calculations, empty terms, authorization, and tenant isolation; validate and save a checkpoint.

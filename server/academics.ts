@@ -42,3 +42,7 @@ export function summarizePerformanceEntries(markList: Array<{ score: number | st
   const summary = summarizeMarks(normalized);
   return { entries: normalized.length, averagePercentage: summary.average, meanPoints: summary.meanPoints };
 }
+
+export function buildTermPerformanceTrend<T extends { id: number; name: string }>(terms: T[], markList: Array<{ termId: number; score: number | string; maxMarks: number | string; points: number }>) {
+  return terms.map(term => ({ termId: term.id, term: term.name, ...summarizePerformanceEntries(markList.filter(mark => mark.termId === term.id)) }));
+}

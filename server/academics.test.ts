@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks, summarizePerformanceEntries } from "./academics";
+import { buildTermPerformanceTrend, calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks, summarizePerformanceEntries } from "./academics";
 
 describe("Kenyan grading calculations", () => {
   it("converts a score to the configured Kenyan grade and grade points", () => {
@@ -31,5 +31,15 @@ describe("Kenyan grading calculations", () => {
       { score: "60", maxMarks: "100", points: 8 },
     ])).toEqual({ entries: 2, averagePercentage: 70, meanPoints: 10 });
     expect(summarizePerformanceEntries([])).toEqual({ entries: 0, averagePercentage: 0, meanPoints: 0 });
+  });
+
+  it("builds chronological term trend points and preserves empty terms", () => {
+    expect(buildTermPerformanceTrend([
+      { id: 1, name: "Term 1" },
+      { id: 2, name: "Term 2" },
+    ], [{ termId: 1, score: 80, maxMarks: 100, points: 12 }])).toEqual([
+      { termId: 1, term: "Term 1", entries: 1, averagePercentage: 80, meanPoints: 12 },
+      { termId: 2, term: "Term 2", entries: 0, averagePercentage: 0, meanPoints: 0 },
+    ]);
   });
 });
