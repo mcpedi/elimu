@@ -216,3 +216,11 @@
 - [x] Extend the Students search to match linked learner email addresses without weakening tenant isolation.
 - [x] Add bulk learner-email import with admission-number matching, format validation, school-local duplicate detection, partial-error reporting, and audit coverage.
 - [x] Add responsive controls, regression tests, and validation for recovery notices, email search, and bulk email import; save a checkpoint.
+
+- [ ] Connect a transactional email provider for learner recovery notices with a server-only delivery helper.
+- [ ] Add secure provider configuration and sender settings, with clear delivery failure status and no reset-code disclosure.
+- [ ] Add provider mocking/tests for successful delivery, missing configuration, upstream failure, tenant authorization, and audit behavior; validate and save a checkpoint.
+
+- [x] Add an authorised Students workspace filter for all learners, learners with linked emails, or learners without linked emails.
+- [x] Keep email-presence filtering school-scoped and compatible with name, admission-number, and email search.
+- [x] Add responsive result feedback and regression coverage for filter combinations and tenant boundaries; validate and save a checkpoint.

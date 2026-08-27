@@ -401,7 +401,7 @@ export const schoolRouter = router({
   }),
 
   students: router({
-    list: protectedProcedure.input(z.object({ query: z.string().max(80).optional(), classId: z.number().int().positive().optional(), status: z.enum(["active", "transferred", "completed", "inactive"]).optional() }).optional()).query(async ({ ctx, input }) => {
+    list: protectedProcedure.input(z.object({ query: z.string().max(80).optional(), classId: z.number().int().positive().optional(), status: z.enum(["active", "transferred", "completed", "inactive"]).optional(), emailStatus: z.enum(["all", "linked", "missing"]).default("all") }).optional()).query(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal", "deputy_principal", "teacher", "class_teacher", "bursar"]);
       const { db, school } = await getOperatingSchool();
       const filters = [eq(students.schoolId, school.id)];
@@ -416,6 +416,8 @@ export const schoolRouter = router({
       }
       if (input?.classId) filters.push(eq(students.currentClassId, input.classId));
       if (input?.status) filters.push(eq(students.status, input.status));
+      if (input?.emailStatus === "linked") filters.push(isNotNull(students.email));
+      if (input?.emailStatus === "missing") filters.push(isNull(students.email));
       const base = and(...filters);
       const matcher = input?.query?.trim();
       return db
