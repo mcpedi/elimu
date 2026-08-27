@@ -259,3 +259,7 @@
 - [x] Add a bottom-right AI assistant launcher and responsive landing-page chat widget.
 - [x] Prevent blank or incomplete AI replies with bounded retry, continuation guidance, and clear fallback errors while preserving conversation history.
 - [x] Add regression coverage for widget placement, response extraction, blank/truncated responses, retry behavior, and mobile layout; validate and save a checkpoint.
+
+- [x] Add a retryable failed-message state and a visible “Retry answer” action for AI responses that fail.
+- [x] Preserve the last user question and conversation ID when retrying, without duplicating the failed placeholder message.
+- [x] Add regression coverage for retry behavior, loading/disabled states, context preservation, and responsive accessibility; validate and save a checkpoint.

@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from "react";
 export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
+  isError?: boolean;
 };
 
 export type AIChatBoxProps = {
@@ -56,6 +57,9 @@ export type AIChatBoxProps = {
    * Click to send directly
    */
   suggestedPrompts?: string[];
+
+  /** Retry a failed assistant message without duplicating the failed placeholder. */
+  onRetryMessage?: (messageIndex: number) => void;
 };
 
 /**
@@ -118,6 +122,7 @@ export function AIChatBox({
   height = "600px",
   emptyStateMessage = "Start a conversation with AI",
   suggestedPrompts,
+  onRetryMessage,
 }: AIChatBoxProps) {
   const [input, setInput] = useState("");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -260,7 +265,10 @@ export function AIChatBox({
                       )}
                     >
                       {message.role === "assistant" ? (
-                        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                        <div className="space-y-2">
+                          <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                          {message.isError && onRetryMessage ? <button type="button" onClick={() => onRetryMessage(messages.indexOf(message))} disabled={isLoading} className="rounded-md border border-current/20 px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-background/60 disabled:cursor-not-allowed disabled:opacity-50">Retry answer</button> : null}
+                        </div>
                       ) : (
                         <p className="whitespace-pre-wrap text-sm">
                           {message.content}

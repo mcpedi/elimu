@@ -130,14 +130,16 @@ export const appRouter = router({
       } else {
         const firstUserMessage = input.messages.find(message => message.role === "user")?.content ?? "New conversation";
         conversationTitle = firstUserMessage.replace(/\s+/g, " ").trim().slice(0, 70) || "New conversation";
+      }
+      const roleLabel = ctx.user.role.replaceAll("_", " ");
+      const answer = await invokeReliableAssistant(input.messages, roleLabel);
+      if (!conversationId) {
         const inserted = await db.insert(aiConversations).values({ schoolId, userId: ctx.user.id, title: conversationTitle }).$returningId();
         conversationId = inserted[0]?.id;
-        if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to create the conversation." });
+        if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to save the conversation." });
       }
       const lastMessage = input.messages[input.messages.length - 1];
       await db.insert(aiConversationMessages).values({ conversationId, schoolId, userId: ctx.user.id, role: lastMessage.role, content: lastMessage.content });
-      const roleLabel = ctx.user.role.replaceAll("_", " ");
-      const answer = await invokeReliableAssistant(input.messages, roleLabel);
       await db.insert(aiConversationMessages).values({ conversationId, schoolId, userId: ctx.user.id, role: "assistant", content: answer.trim() });
       await db.update(aiConversations).set({ lastMessageAt: new Date() }).where(and(eq(aiConversations.id, conversationId), eq(aiConversations.schoolId, schoolId), eq(aiConversations.userId, ctx.user.id)));
       await writeAuditLog({ schoolId, actorUserId: ctx.user.id, action: "assistant.requested", entityType: "assistant_conversation", entityId: conversationId, metadata: { role: ctx.user.role, messageCount: input.messages.length } });
