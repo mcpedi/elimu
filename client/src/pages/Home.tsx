@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout, { type NavigationItem } from "@/components/DashboardLayout";
+import { AIChatBox, type Message } from "@/components/AIChatBox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { BRAND_LOGO_URL } from "@/const";
 import { format } from "date-fns";
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, Building2, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileBarChart, FileText, GraduationCap, LayoutDashboard, ListChecks, Loader2, Megaphone, MoreHorizontal, Plus, ReceiptText, Search, Settings2, ShieldCheck, SlidersHorizontal, SquareArrowOutUpRight, TableProperties, UserCheck, UserRoundCog, UserRoundX, Users, WalletCards,
+  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, Building2, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileBarChart, FileText, GraduationCap, LayoutDashboard, ListChecks, Loader2, Megaphone, MoreHorizontal, Plus, ReceiptText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, SquareArrowOutUpRight, TableProperties, UserCheck, UserRoundCog, UserRoundX, Users, WalletCards,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -54,7 +55,7 @@ function downloadCsv(filename: string, rows: Array<Record<string, string | numbe
 }
 
 export function roleNavigation(role?: string, isPlatformAdmin = false): NavigationItem[] {
-  const shared = [{ id: "dashboard", label: "Overview", icon: LayoutDashboard }];
+  const shared = [{ id: "dashboard", label: "Overview", icon: LayoutDashboard }, { id: "assistant", label: "AI assistant", icon: Sparkles }];
   if (["super_admin", "principal", "deputy_principal", "bursar"].includes(role ?? "")) {
     return [...shared, ...(role === "super_admin" && isPlatformAdmin ? [{ id: "platform", label: "Platform monitor", icon: Building2 }] : []), { id: "students", label: "Students", icon: Users }, { id: "teachers", label: "Teachers", icon: UserRoundCog }, { id: "academics", label: "Academics", icon: BookOpenCheck }, { id: "homework", label: "Assignments", icon: FileText }, { id: "attendance", label: "Attendance", icon: ClipboardCheck }, { id: "fees", label: "Fees", icon: WalletCards }, { id: "timetable", label: "Timetable", icon: CalendarDays }, { id: "calendar", label: "Calendar & notices", icon: Megaphone }, { id: "messages", label: "Messages", icon: Bell }, { id: "operations", label: "Daily tasks", icon: ListChecks }, { id: "advanced", label: "Search & alerts", icon: Settings2 }, { id: "documents", label: "IDs & bulk", icon: FileBarChart }, ...(role !== "bursar" ? [{ id: "manage", label: "Record maintenance", icon: Settings2 }] : []), { id: "reports", label: "Reports", icon: FileBarChart }, { id: "audit", label: "Audit log", icon: ShieldCheck }, ...(role === "super_admin" ? [{ id: "settings", label: "Settings", icon: Settings2 }] : [])];
   }
@@ -533,13 +534,25 @@ function PlatformAdministratorManagement() {
 
 function FormInput({ label, value, setValue, required = false, placeholder }: { label: string; value: string; setValue: (value: string) => void; required?: boolean; placeholder?: string }) { return <div><Label>{label}</Label><Input className="mt-2 rounded-xl" value={value} onChange={event => setValue(event.target.value)} required={required} placeholder={placeholder} /></div>; }
 
+type AssistantMessage = { role: "user" | "assistant"; content: string };
+function AssistantPanel() {
+  const { user } = useAuth();
+  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const assistant = trpc.assistant.ask.useMutation({ onSuccess: response => setMessages(previous => [...previous, { role: "assistant", content: response.answer }]), onError: error => toast.error(error.message || "The assistant is temporarily unavailable.") });
+  const sendMessage = (content: string) => {
+    const nextMessages: AssistantMessage[] = [...messages, { role: "user", content }];
+    setMessages(nextMessages);
+    assistant.mutate({ messages: nextMessages });
+  };
+  return <div className="space-y-5"><SectionHeading eyebrow="Elimubora360 assistant" title={`How can I help, ${user?.name?.split(/\\s+/)[0] || "there"}?`} description="Ask for navigation help, marks and grading explanations, or guidance on a school workflow. The assistant cannot bypass your role or silently change records." /><Card className="overflow-hidden rounded-[1.75rem] border-emerald-950/8 shadow-[0_18px_45px_-28px_rgba(13,68,55,0.5)] dark:border-white/8"><CardContent className="p-0"><AIChatBox messages={messages as Message[]} onSendMessage={sendMessage} isLoading={assistant.isPending} height="min(620px, calc(100vh - 220px))" emptyStateMessage="Start with a question about Elimubora360." suggestedPrompts={["Where do I enter marks for a subject?", "How are mean grades and percentages calculated?", "How do I print a learner report card?", "Where can I view the audit details?"]} /></CardContent></Card><p className="text-xs leading-5 text-slate-500 dark:text-slate-400"><strong className="font-semibold text-slate-700 dark:text-slate-300">Safety note:</strong> Use the normal workspace controls for marks, fees, passwords, school codes, permissions, and other sensitive changes. Check important answers against your school records.</p></div>;
+}
 export default function Home() {
   const { user } = useAuth();
   const platformAccess = trpc.school.platform.access.useQuery(undefined, { enabled: user?.role === "super_admin" });
   const nav = useMemo(() => roleNavigation(user?.role, Boolean(platformAccess.data?.allowed)), [user?.role, platformAccess.data?.allowed]);
   const [active, setActive] = useState("dashboard");
   const safeActive = nav.some(item => item.id === active) ? active : "dashboard";
-  const titles: Record<string, string> = { dashboard: "School overview", platform: "Platform monitor", students: "Learner records", teachers: "Teaching team", academics: "Academics", homework: "Assignments & homework", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", calendar: "Calendar & notices", messages: "Messages & branding", operations: "Daily tasks", advanced: "Search & alerts", documents: "Digital IDs & bulk", manage: "Record maintenance", reports: "Reports", audit: "Audit log", settings: "Settings & access" };
-  const content = { dashboard: <Overview />, platform: <PlatformMonitor />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , homework: <AssignmentsPanel />, attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, calendar: <CalendarAndNoticesPanel />, messages: <MessagingAndBrandingPanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <SchoolToolsPanel />, documents: <StudentIdAndBulkPanel />, manage: <ManagementPanel />, reports: <ReportsPanel />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
+  const titles: Record<string, string> = { dashboard: "School overview", assistant: "AI assistant", platform: "Platform monitor", students: "Learner records", teachers: "Teaching team", academics: "Academics", homework: "Assignments & homework", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", calendar: "Calendar & notices", messages: "Messages & branding", operations: "Daily tasks", advanced: "Search & alerts", documents: "Digital IDs & bulk", manage: "Record maintenance", reports: "Reports", audit: "Audit log", settings: "Settings & access" };
+  const content = { dashboard: <Overview />, assistant: <AssistantPanel />, platform: <PlatformMonitor />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , homework: <AssignmentsPanel />, attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, calendar: <CalendarAndNoticesPanel />, messages: <MessagingAndBrandingPanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <SchoolToolsPanel />, documents: <StudentIdAndBulkPanel />, manage: <ManagementPanel />, reports: <ReportsPanel />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
   return <DashboardLayout navigation={nav} activeId={safeActive} onNavigate={setActive} title={titles[safeActive] ?? "School workspace"} subtitle="Secure, role-specific school operations">{content}</DashboardLayout>;
 }

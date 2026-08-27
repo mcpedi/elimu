@@ -245,3 +245,8 @@
 - [x] Display a readable signed-in user role beneath the personalized greeting in the dashboard header.
 - [x] Keep the role label visible, accessible, and responsive on mobile without exposing extra account data.
 - [x] Add regression coverage for role formatting and greeting/header rendering, validate mobile layout, and save a checkpoint.
+
+- [x] Define role-aware AI assistant capabilities, allowed context, privacy boundaries, and confirmation rules for sensitive actions.
+- [x] Add a protected server-side assistant procedure using the built-in LLM without exposing credentials or cross-school data.
+- [x] Add a responsive assistant chat experience with navigation help, marks/grading explanations, and safe workflow guidance.
+- [x] Add regression coverage for role isolation, prompt-injection resistance, grading guidance, error handling, and responsive behavior; validate and save a checkpoint.
