@@ -32,7 +32,7 @@ import {
   timetableSlots,
   users,
 } from "../../drizzle/schema";
-import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks } from "../academics";
+import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks, summarizePerformanceEntries } from "../academics";
 import { summarizeAttendance } from "../attendance";
 import { getDb, writeAuditLog } from "../db";
 import { adjustFeeDue, applyPayment } from "../fee-calculations";
@@ -763,6 +763,24 @@ export const schoolRouter = router({
         grouped.set(row.subjectId, entry);
       }
       return Array.from(grouped.entries()).map(([subjectId, value]) => ({ subjectId, subject: value.subject, learnersMarked: value.entries.length, ...summarizeMarks(value.entries) }));
+    }),
+    classPerformanceOverview: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [term] = await db.select({ id: terms.id }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
+      if (!term) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term that belongs to the selected academic year in this school." });
+      const classRows = await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(eq(schoolClasses.schoolId, school.id)).orderBy(asc(schoolClasses.form), asc(schoolClasses.stream));
+      const rows = await db.select({ classId: assessments.classId, subjectId: subjects.id, subject: subjects.name, score: marks.score, maxMarks: assessments.maxMarks, points: marks.gradePoints }).from(marks).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).innerJoin(subjects, eq(marks.subjectId, subjects.id)).where(and(eq(assessments.schoolId, school.id), eq(assessments.academicYearId, input.academicYearId), eq(assessments.termId, input.termId)));
+      const calculate = (entries: Array<{ score: string; maxMarks: string; points: number }>) => {
+        const summary = summarizePerformanceEntries(entries);
+        return { ...summary, meanGrade: summary.entries ? calculateGrade(summary.averagePercentage, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade : null };
+      };
+      const classSummaries = classRows.map(classRow => ({ classId: classRow.id, form: classRow.form, stream: classRow.stream, ...calculate(rows.filter(row => row.classId === classRow.id)) }));
+      const subjectsById = new Map<number, Array<{ score: string; maxMarks: string; points: number }>>();
+      const subjectNames = new Map<number, string>();
+      for (const row of rows) { subjectsById.set(row.subjectId, [...(subjectsById.get(row.subjectId) ?? []), row]); subjectNames.set(row.subjectId, row.subject); }
+      const subjectRanking = Array.from(subjectsById.entries()).map(([subjectId, entries]) => ({ subjectId, subject: subjectNames.get(subjectId) ?? "Subject", ...calculate(entries) })).sort((left, right) => right.averagePercentage - left.averagePercentage || right.meanPoints - left.meanPoints || left.subject.localeCompare(right.subject)).map((row, index) => ({ ...row, rank: index + 1 }));
+      return { classSummaries, subjectRanking, totalMarkEntries: rows.length };
     }),
   }),
 

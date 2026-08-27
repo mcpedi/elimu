@@ -35,3 +35,10 @@ export function summarizeMarks(markList: Array<{ score: number; maxMarks: number
     meanPoints: Number((points / markList.length).toFixed(2)),
   };
 }
+
+export function summarizePerformanceEntries(markList: Array<{ score: number | string; maxMarks: number | string; points: number }>) {
+  if (markList.length === 0) return { entries: 0, averagePercentage: 0, meanPoints: 0 };
+  const normalized = markList.map(mark => ({ score: Number(mark.score), maxMarks: Number(mark.maxMarks), points: mark.points }));
+  const summary = summarizeMarks(normalized);
+  return { entries: normalized.length, averagePercentage: summary.average, meanPoints: summary.meanPoints };
+}

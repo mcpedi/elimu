@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks } from "./academics";
+import { calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks, summarizePerformanceEntries } from "./academics";
 
 describe("Kenyan grading calculations", () => {
   it("converts a score to the configured Kenyan grade and grade points", () => {
@@ -23,5 +23,13 @@ describe("Kenyan grading calculations", () => {
       { score: 80, maxMarks: 100, points: 12 },
       { score: 30, maxMarks: 50, points: 8 },
     ])).toEqual({ total: 110, average: 70, meanPoints: 10 });
+  });
+
+  it("calculates comparable class-performance means across different assessment maximums", () => {
+    expect(summarizePerformanceEntries([
+      { score: "40", maxMarks: "50", points: 12 },
+      { score: "60", maxMarks: "100", points: 8 },
+    ])).toEqual({ entries: 2, averagePercentage: 70, meanPoints: 10 });
+    expect(summarizePerformanceEntries([])).toEqual({ entries: 0, averagePercentage: 0, meanPoints: 0 });
   });
 });

@@ -184,3 +184,8 @@
 - [x] Define selectable learner-summary sections that use only the existing authorised detail payload and preserve a useful default selection.
 - [x] Add responsive section selectors in the learner detail dialog and generate a branded print document containing only selected sections.
 - [x] Add document-output regressions for selected and excluded sections; validate type checks, full tests, responsive shell, and checkpoint.
+
+- [x] Define school-scoped academic performance metrics for class mean grade, average percentage, and strongest-to-weakest subject ranking.
+- [x] Add a protected academic-performance aggregation procedure scoped to selected academic year and term, with class and subject validation.
+- [x] Build a responsive Academics performance view showing every class summary and ordered subject results.
+- [x] Add regression coverage for calculations, empty data, ties, invalid scope, role authorization, and tenant isolation; validate and save a checkpoint.
