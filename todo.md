@@ -263,3 +263,7 @@
 - [x] Add a retryable failed-message state and a visible “Retry answer” action for AI responses that fail.
 - [x] Preserve the last user question and conversation ID when retrying, without duplicating the failed placeholder message.
 - [x] Add regression coverage for retry behavior, loading/disabled states, context preservation, and responsive accessibility; validate and save a checkpoint.
+
+- [x] Add the footer credit “Designed by Jacks Webs Solutions” to the dashboard shell.
+- [x] Keep the credit discreet, accessible, and readable across desktop and mobile layouts.
+- [x] Add regression coverage for footer rendering, validate the responsive shell, and save a checkpoint.
