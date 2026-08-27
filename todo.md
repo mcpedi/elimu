@@ -228,3 +228,7 @@
 - [x] Add a visible leadership-only school-code management workflow for learner login access.
 - [x] Validate school-code format and uniqueness, preserve learner login compatibility, and audit every code change.
 - [x] Add responsive view, edit, copy/share, and regression coverage for school-code management; validate and save a checkpoint.
+
+- [x] Add a printable learner-login instruction sheet using the current school name, code, login address, and safe learner guidance.
+- [x] Add preview and print/save-PDF controls under School configuration without exposing administrator-only data.
+- [x] Add regression coverage for escaped document content, school-code inclusion, print handoff, and responsive controls; validate and save a checkpoint.
