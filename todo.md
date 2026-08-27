@@ -250,3 +250,8 @@
 - [x] Add a protected server-side assistant procedure using the built-in LLM without exposing credentials or cross-school data.
 - [x] Add a responsive assistant chat experience with navigation help, marks/grading explanations, and safe workflow guidance.
 - [x] Add regression coverage for role isolation, prompt-injection resistance, grading guidance, error handling, and responsive behavior; validate and save a checkpoint.
+
+- [x] Persist private AI conversations and messages under the authenticated user and school tenant.
+- [x] Add protected procedures to list, create, resume, rename, and append messages to a user’s own conversations.
+- [x] Add responsive history controls with new chat, resume, rename, empty, loading, and error states.
+- [x] Add regression coverage for user/school isolation, ordering, message persistence, rename behavior, and responsive history controls; validate and save a checkpoint.

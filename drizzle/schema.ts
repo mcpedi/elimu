@@ -491,6 +491,28 @@ export const reportExports = mysqlTable("reportExports", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("report_export_school_created_index").on(table.schoolId, table.createdAt)]);
 
+export const aiConversations = mysqlTable("aiConversations", {
+  id: int("id").autoincrement().primaryKey(),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  userId: int("userId").notNull().references(() => users.id),
+  title: varchar("title", { length: 160 }).notNull().default("New conversation"),
+  lastMessageAt: timestamp("lastMessageAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("ai_conversation_user_recent_index").on(table.userId, table.lastMessageAt), index("ai_conversation_school_user_index").on(table.schoolId, table.userId)]);
+export type AiConversation = typeof aiConversations.$inferSelect;
+export type InsertAiConversation = typeof aiConversations.$inferInsert;
+export const aiConversationMessages = mysqlTable("aiConversationMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  conversationId: int("conversationId").notNull().references(() => aiConversations.id),
+  schoolId: int("schoolId").notNull().references(() => schools.id),
+  userId: int("userId").notNull().references(() => users.id),
+  role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("ai_message_conversation_created_index").on(table.conversationId, table.createdAt), index("ai_message_school_user_index").on(table.schoolId, table.userId)]);
+export type AiConversationMessage = typeof aiConversationMessages.$inferSelect;
+export type InsertAiConversationMessage = typeof aiConversationMessages.$inferInsert;
 export const auditLogs = mysqlTable("auditLogs", {
   id: int("id").autoincrement().primaryKey(),
   schoolId: int("schoolId").references(() => schools.id),
