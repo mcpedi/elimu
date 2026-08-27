@@ -207,3 +207,7 @@
 - [x] Define the authorised receipt preview fields and ensure previewing does not create a document audit until printing or saving.
 - [x] Add a responsive in-app receipt preview with learner, payment, and remaining-balance details plus a print handoff.
 - [x] Add regression coverage for preview contents, balance visibility, authorization, and print-audit behavior; validate and save a checkpoint.
+
+- [x] Add a secure school-scoped admin workflow to link, update, or clear a learner email on the student profile.
+- [x] Validate learner email format and school-local uniqueness, and audit every email-link change without exposing unrelated schools.
+- [x] Add responsive admin controls and regression coverage for authorization, validation, uniqueness, clearing, and learner-profile visibility; validate and save a checkpoint.

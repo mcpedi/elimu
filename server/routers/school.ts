@@ -465,6 +465,20 @@ export const schoolRouter = router({
       if (studentIds.length === 0) return [];
       return db.select({ studentId: students.id, admissionNo: students.admissionNo, firstName: students.firstName, lastName: students.lastName, subject: subjects.name, subjectCode: subjects.code, assessment: assessments.title, assessmentDate: assessments.assessmentDate, score: marks.score, grade: marks.grade, gradePoints: marks.gradePoints }).from(marks).innerJoin(students, eq(marks.studentId, students.id)).innerJoin(subjects, eq(marks.subjectId, subjects.id)).innerJoin(assessments, eq(marks.assessmentId, assessments.id)).where(and(eq(students.schoolId, school.id), inArray(marks.studentId, studentIds))).orderBy(desc(assessments.assessmentDate), asc(subjects.name)).limit(100);
     }),
+    updateStudentEmail: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), email: z.string().trim().email("Enter a valid learner email address.").max(320).optional() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [student] = await db.select({ id: students.id, email: students.email }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Student not found in your school." });
+      const normalizedEmail = input.email?.trim().toLowerCase() || null;
+      if (normalizedEmail) {
+        const existing = await db.select({ id: students.id, email: students.email }).from(students).where(and(eq(students.schoolId, school.id), isNotNull(students.email))).limit(500);
+        if (existing.some(row => row.id !== student.id && row.email?.trim().toLowerCase() === normalizedEmail)) throw new TRPCError({ code: "CONFLICT", message: "That email is already linked to another learner in this school." });
+      }
+      await db.update(students).set({ email: normalizedEmail }).where(and(eq(students.id, student.id), eq(students.schoolId, school.id)));
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: "student.email_updated", entityType: "student", entityId: student.id, metadata: { previousEmail: student.email ?? null, email: normalizedEmail, cleared: normalizedEmail === null } });
+      return { success: true, email: normalizedEmail };
+    }),
     linkStudentAccount: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin", "principal"]);
       const { db, school } = await getOperatingSchool();

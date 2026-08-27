@@ -206,6 +206,18 @@ describe("record-management procedures", () => {
     await expect(appRouter.createCaller(context("parent")).school.finance.studentStatement({ studentId: 11 })).rejects.toThrow("linked to your account");
   });
 
+  it("links, updates, and clears a school-scoped learner email while rejecting duplicates and portal users", async () => {
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, [{ id: 11, schoolId: 1, email: null }, { id: 12, schoolId: 1, email: "other@example.com" }, { id: 13, schoolId: 2, email: "foreign@example.com" }]] ]));
+    const caller = appRouter.createCaller(context("super_admin"));
+    await expect(caller.school.students.updateStudentEmail({ studentId: 11, email: " Learner@Example.com " })).resolves.toEqual({ success: true, email: "learner@example.com" });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.email_updated", entityType: "student", entityId: 11, metadata: expect.objectContaining({ email: "learner@example.com", cleared: false }) }));
+    await expect(caller.school.students.updateStudentEmail({ studentId: 11, email: "other@example.com" })).rejects.toThrow("already linked");
+    await expect(caller.school.students.updateStudentEmail({ studentId: 11 })).resolves.toEqual({ success: true, email: null });
+    await expect(appRouter.createCaller(context("parent")).school.students.updateStudentEmail({ studentId: 11, email: "parent@example.com" })).rejects.toThrow();
+    dbState.current = fakeDb(new Map([[schools, [school]], [students, []]]));
+    await expect(caller.school.students.updateStudentEmail({ studentId: 13, email: "foreign-update@example.com" })).rejects.toThrow("Student not found");
+  });
+
   it("blocks portal users from all protected record-management mutations", async () => {
     dbState.current = fakeDb(new Map([[schools, [school]]]));
     const caller = appRouter.createCaller(context("parent"));
