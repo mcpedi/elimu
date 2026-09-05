@@ -295,3 +295,4 @@
 - [x] Add protected category-specific notification clearing with user and school isolation.
 - [x] Add category clear controls with confirmation and empty-state feedback.
 - [x] Add regression tests, responsive visual validation, and a checkpoint.
+- [x] Fix reported unresponsive notification buttons and verify all click/mutation flows.

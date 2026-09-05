@@ -44,7 +44,9 @@ describe("mounted dashboard section transition", () => {
     expect(screen.queryByLabelText("Loading Students")).toBeNull();
 
     fireEvent.click(screen.getAllByRole("button", { name: /students/i })[0]);
-    expect(screen.getByLabelText("Loading Students")).toBeTruthy();
+    const transition = screen.getByLabelText("Loading Students");
+    expect(transition).toBeTruthy();
+    expect(transition.querySelector(".section-transition-card")?.classList.contains("pointer-events-none")).toBe(true);
 
     act(() => vi.advanceTimersByTime(259));
     expect(screen.getByLabelText("Loading Students")).toBeTruthy();
