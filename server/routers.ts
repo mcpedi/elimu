@@ -135,7 +135,7 @@ export const appRouter = router({
       const roleLabel = ctx.user.role.replaceAll("_", " ");
       const answer = await invokeReliableAssistant(input.messages, roleLabel);
       if (!conversationId) {
-        const inserted = await db.insert(aiConversations).values({ schoolId, userId: ctx.user.id, title: conversationTitle }).$returningId();
+        const inserted = await db.insert(aiConversations).values({ schoolId, userId: ctx.user.id, title: conversationTitle }).returning({ id: aiConversations.id });
         conversationId = inserted[0]?.id;
         if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to save the conversation." });
       }
