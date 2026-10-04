@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { COOKIE_NAME } from "@shared/const";
+import { LOCAL_SESSION_COOKIE } from "./local-auth";
 import { academicYears, assessments, marks, reportCards, reportExports, schoolClasses, schools, studentCredentials, students, subjects, teacherAssignments, teachers, terms, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
@@ -15,6 +15,11 @@ vi.mock("./_core/sdk", () => ({
     createSessionToken: vi.fn(async () => "student-session-token"),
   },
 }));
+
+vi.mock("./local-auth", async importOriginal => {
+  const actual = await importOriginal<typeof import("./local-auth")>();
+  return { ...actual, createLocalSession: vi.fn(async () => "student-local-session") };
+});
 
 import { writeAuditLog } from "./db";
 import { appRouter } from "./routers";
@@ -78,7 +83,7 @@ describe("student authentication procedures", () => {
     expect(tables.get(studentCredentials)?.[0].passwordHash).not.toContain("ADM-0042");
     expect(tables.get(users)?.[0].role).toBe("student");
     expect(tables.get(users)?.[0].schoolId).toBe(1);
-    expect(res.cookie).toHaveBeenCalledWith(COOKIE_NAME, "student-session-token", expect.objectContaining({ httpOnly: true, secure: true, maxAge: expect.any(Number) }));
+    expect(res.cookie).toHaveBeenCalledWith(LOCAL_SESSION_COOKIE, "student-local-session", expect.objectContaining({ httpOnly: true, secure: true, maxAge: expect.any(Number) }));
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_succeeded", actorUserId: tables.get(users)?.[0].id, metadata: expect.objectContaining({ passwordMode: "admission_number" }) }));
   });
 

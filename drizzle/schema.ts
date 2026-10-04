@@ -530,3 +530,38 @@ export const auditLogs = pgTable("auditLogs", {
   metadata: jsonb("metadata").$type<Record<string, unknown>>(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("audit_school_created_index").on(table.schoolId, table.createdAt)]);
+
+
+export const localAuthCredentials = pgTable("localAuthCredentials", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  username: varchar("username", { length: 160 }).notNull(),
+  passwordHash: varchar("passwordHash", { length: 255 }),
+  setupCodeHash: varchar("setupCodeHash", { length: 255 }),
+  setupCodeExpiresAt: timestamp("setupCodeExpiresAt"),
+  failedAttempts: integer("failedAttempts").default(0).notNull(),
+  lockedUntil: timestamp("lockedUntil"),
+  lastLoginAt: timestamp("lastLoginAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("local_auth_credentials_user_unique").on(table.userId),
+  uniqueIndex("local_auth_credentials_username_unique").on(table.username),
+]);
+export type LocalAuthCredential = typeof localAuthCredentials.$inferSelect;
+export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert;
+
+export const localAuthSessions = pgTable("localAuthSessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  lastSeenAt: timestamp("lastSeenAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("local_auth_session_token_unique").on(table.tokenHash),
+  index("local_auth_session_user_index").on(table.userId),
+  index("local_auth_session_expiry_index").on(table.expiresAt),
+]);
+export type LocalAuthSession = typeof localAuthSessions.$inferSelect;
+export type InsertLocalAuthSession = typeof localAuthSessions.$inferInsert;

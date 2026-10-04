@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { DISABLED_ACCOUNT_MESSAGE } from "./account-suspension";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
@@ -8,11 +8,11 @@ import { createStudentResetCode, hashStudentSecret, normalizeStudentIdentifier, 
 import { getDb, writeAuditLog } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { sdk } from "./_core/sdk";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { schoolRouter } from "./routers/school";
 import { requireRole } from "./permissions";
 import { invokeLLM } from "./_core/llm";
+import { clearLocalSession, completeLocalSetup, createLocalSession, issueLocalSetupCode, loginLocalUser, LOCAL_SESSION_COOKIE, readLocalSessionToken } from "./local-auth";
 
 const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admission number as the password.").max(128);
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
@@ -149,6 +149,34 @@ export const appRouter = router({
   }),
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    loginLocal: publicProcedure.input(z.object({ identifier: z.string().trim().min(2).max(160), password: z.string().min(1).max(128) })).mutation(async ({ ctx, input }) => {
+      const result = await loginLocalUser(input.identifier, input.password);
+      if (!result.ok) throw new TRPCError({ code: result.reason === "locked" ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED", message: result.reason === "locked" ? "Too many failed attempts. Try again in 15 minutes." : "Invalid username or password." });
+      const token = await createLocalSession(result.user.id);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+      await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role } });
+      return { success: true, user: { id: result.user.id, name: result.user.name, role: result.user.role } } as const;
+    }),
+    issueLocalSetupCode: protectedProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal"]);
+      const db = await getDb();
+      if (!db || !ctx.user.schoolId) throw new TRPCError({ code: "FORBIDDEN", message: "A school-linked administrator account is required." });
+      const target = (await db.select().from(users).where(and(eq(users.id, input.userId), eq(users.schoolId, ctx.user.schoolId))).limit(1))[0];
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found in this school." });
+      const setup = await issueLocalSetupCode(target.id);
+      await writeAuditLog({ schoolId: ctx.user.schoolId, actorUserId: ctx.user.id, action: "auth.local_setup_code_issued", entityType: "user", entityId: target.id, metadata: { expiresAt: setup.expiresAt.toISOString(), delivery: "school_office" } });
+      return { success: true, code: setup.code, expiresAt: setup.expiresAt, user: { id: target.id, name: target.name, role: target.role } } as const;
+    }),
+    completeLocalSetup: publicProcedure.input(z.object({ userId: z.number().int().positive(), setupCode: z.string().trim().min(8).max(32), username: z.string().trim().min(3).max(80), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+      if (input.password !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      try {
+        const result = await completeLocalSetup({ userId: input.userId, setupCode: input.setupCode, username: input.username, password: input.password });
+        await writeAuditLog({ action: "auth.local_setup_completed", entityType: "user", entityId: input.userId, metadata: { username: result.username } });
+        return { success: true, username: result.username } as const;
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete account setup." });
+      }
+    }),
     loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
       const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
       if (student?.disabledAt) {
@@ -182,8 +210,8 @@ export const appRouter = router({
       const signedInAt = new Date();
       await db.update(studentCredentials).set({ failedAttempts: 0, lockedUntil: null, lastLoginAt: signedInAt }).where(eq(studentCredentials.studentId, student.id));
       await db.update(users).set({ lastSignedIn: signedInAt, name: `${student.firstName} ${student.lastName}`, role: "student", loginMethod: "student_password" }).where(eq(users.id, user.id));
-      const sessionToken = await sdk.createSessionToken(user.openId, { name: `${student.firstName} ${student.lastName}`, expiresInMs: ONE_YEAR_MS });
-      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: ONE_YEAR_MS });
+      const sessionToken = await createLocalSession(user.id);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
       await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } } as const;
     }),
@@ -260,9 +288,11 @@ export const appRouter = router({
       await writeAuditLog({ schoolId: student.schoolId, actorUserId: ctx.user.id, action: "student.password_changed", entityType: "student", entityId: student.id, metadata: { passwordMode: "custom", sessionPreserved: true } });
       return { success: true } as const;
     }),
-    logout: publicProcedure.mutation(({ ctx }) => {
+    logout: publicProcedure.mutation(async ({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      await clearLocalSession(readLocalSessionToken(ctx.req));
+      ctx.res.clearCookie(LOCAL_SESSION_COOKIE, { ...cookieOptions, maxAge: -1 });
       return {
         success: true,
       } as const;
