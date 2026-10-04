@@ -12,7 +12,7 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { schoolRouter } from "./routers/school";
 import { requireRole } from "./permissions";
 import { invokeLLM } from "./_core/llm";
-import { clearLocalSession, completeLocalSetup, createLocalSession, issueLocalSetupCode, loginLocalUser, LOCAL_SESSION_COOKIE, readLocalSessionToken } from "./local-auth";
+import { clearLocalSession, completeLocalSetup, completeSuperAdminSetup, createLocalSession, issueLocalSetupCode, loginLocalUser, LOCAL_SESSION_COOKIE, readLocalSessionToken } from "./local-auth";
 
 const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admission number as the password.").max(128);
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
@@ -175,6 +175,16 @@ export const appRouter = router({
         return { success: true, username: result.username } as const;
       } catch (error) {
         throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete account setup." });
+      }
+    }),
+    completeSuperAdminSetup: publicProcedure.input(z.object({ setupCode: z.string().trim().min(8).max(32), username: z.string().trim().min(3).max(80), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+      if (input.password !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      try {
+        const result = await completeSuperAdminSetup({ setupCode: input.setupCode, username: input.username, password: input.password });
+        await writeAuditLog({ action: "auth.super_admin_setup_completed", entityType: "user", metadata: { username: result.username } });
+        return { success: true, username: result.username } as const;
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete Super Administrator setup." });
       }
     }),
     loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {

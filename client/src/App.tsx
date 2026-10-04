@@ -6,12 +6,14 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import CardVerification from "./pages/CardVerification";
+import SuperAdminSetup from "./pages/SuperAdminSetup";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path={"/verify-card"} component={CardVerification} />
+      <Route path={"/setup/super-admin"} component={SuperAdminSetup} />
       <Route path={"/"} component={Home} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

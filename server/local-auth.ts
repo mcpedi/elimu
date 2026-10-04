@@ -85,6 +85,19 @@ export async function completeLocalSetup(input: { userId: number; setupCode: str
   return { username };
 }
 
+export async function completeSuperAdminSetup(input: { setupCode: string; username: string; password: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database service is unavailable.");
+  const candidates = await db.select({ user: users, credential: localAuthCredentials }).from(users).innerJoin(localAuthCredentials, eq(localAuthCredentials.userId, users.id)).where(eq(users.role, "super_admin"));
+  for (const candidate of candidates) {
+    const credential = candidate.credential;
+    if (credential.setupCodeHash && credential.setupCodeExpiresAt && credential.setupCodeExpiresAt.getTime() > Date.now() && await verifyStudentSecret(input.setupCode.trim().toUpperCase(), credential.setupCodeHash)) {
+      return completeLocalSetup({ userId: candidate.user.id, setupCode: input.setupCode, username: input.username, password: input.password });
+    }
+  }
+  throw new Error("Setup code invalid or expired.");
+}
+
 export async function loginLocalUser(identifier: string, password: string) {
   const db = await getDb();
   if (!db) throw new Error("Database service is unavailable.");
