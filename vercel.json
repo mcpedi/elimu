@@ -14,7 +14,7 @@
   },
   "rewrites": [
     { "source": "/manus-storage/:path*", "destination": "/api/manus-storage/:path*" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/:path((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
