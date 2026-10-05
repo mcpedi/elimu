@@ -1,4 +1,4 @@
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME } from "../shared/const";
 import { TRPCError } from "@trpc/server";
 import { DISABLED_ACCOUNT_MESSAGE } from "./account-suspension";
 import { and, asc, desc, eq, sql } from "drizzle-orm";

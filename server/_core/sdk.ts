@@ -2,7 +2,7 @@ import type { Request } from "express";
 import type { User } from "../../drizzle/schema";
 import { authenticateLocalRequest } from "../local-auth";
 import { DISABLED_ACCOUNT_MESSAGE } from "../account-suspension";
-import { ForbiddenError } from "@shared/_core/errors";
+import { ForbiddenError } from "../../shared/_core/errors";
 
 export type AuthenticatedUser = User & { taskUid?: string; isCron?: boolean };
 
