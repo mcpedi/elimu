@@ -12,13 +12,19 @@ export function createApp() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   registerStorageProxy(app);
-  app.use(
-    "/api/trpc",
-    createExpressMiddleware({
-      router: appRouter,
-      createContext,
-    }),
-  );
+  const trpcMiddleware = createExpressMiddleware({
+    router: appRouter,
+    createContext,
+  });
+  // Vercel may invoke a catch-all function with either /api/trpc/... or
+  // /trpc/... as req.url. Supporting both keeps the same handler portable
+  // across Vercel and the standalone Express server.
+  app.use(["/api/trpc", "/trpc"], trpcMiddleware);
+
+  app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("[API] Unhandled request error", error);
+    if (!res.headersSent) res.status(500).json({ error: { message: "The server could not complete the request." } });
+  });
 
   return app;
 }
