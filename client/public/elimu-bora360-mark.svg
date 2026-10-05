@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">ElimuBora360 logo</title>
+  <desc id="desc">Green circular school mark with a gold open book and E</desc>
+  <defs>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#145844"/>
+      <stop offset="1" stop-color="#082f27"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f2cf7a"/>
+      <stop offset="1" stop-color="#b17b28"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="119" fill="url(#green)"/>
+  <circle cx="128" cy="128" r="105" fill="none" stroke="#f2cf7a" stroke-opacity=".35" stroke-width="3"/>
+  <path d="M55 91c25-16 49-14 73 2v92c-24-16-48-18-73-2V91Z" fill="#fff" fill-opacity=".96"/>
+  <path d="M201 91c-25-16-49-14-73 2v92c24-16 48-18 73-2V91Z" fill="#fff" fill-opacity=".82"/>
+  <path d="M128 93v92" stroke="#b17b28" stroke-width="5" stroke-linecap="round"/>
+  <path d="M76 112c14-5 29-4 43 4M76 132c14-5 29-4 43 4M180 112c-14-5-29-4-43 4M180 132c-14-5-29-4-43 4" fill="none" stroke="#145844" stroke-opacity=".5" stroke-width="4" stroke-linecap="round"/>
+  <path d="M128 49c10 17 20 26 36 34" fill="none" stroke="url(#gold)" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="128" cy="49" r="8" fill="#f2cf7a"/>
+</svg>

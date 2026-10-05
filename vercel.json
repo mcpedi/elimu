@@ -7,6 +7,9 @@
   "functions": {
     "api/[...path].ts": {
       "maxDuration": 60
+    },
+    "api/trpc/[...path].ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
