@@ -15,6 +15,17 @@ function Router() {
       <Route path={"/verify-card"} component={CardVerification} />
       <Route path={"/setup/super-admin"} component={SuperAdminSetup} />
       <Route path={"/"} component={Home} />
+      <Route path={"/login"} component={Home} />
+      <Route path={"/dashboard"} component={Home} />
+      <Route path={"/students"} component={Home} />
+      <Route path={"/teachers"} component={Home} />
+      <Route path={"/academics"} component={Home} />
+      <Route path={"/fees"} component={Home} />
+      <Route path={"/attendance"} component={Home} />
+      <Route path={"/assignments"} component={Home} />
+      <Route path={"/timetable"} component={Home} />
+      <Route path={"/reports"} component={Home} />
+      <Route path={"/settings"} component={Home} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
