@@ -8,7 +8,7 @@
     "api/[...path].ts": {
       "maxDuration": 60
     },
-    "api/trpc/[...path].ts": {
+    "api/trpc/[...path].js": {
       "maxDuration": 60
     }
   },

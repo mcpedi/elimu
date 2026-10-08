@@ -586,7 +586,51 @@ function AIAssistantWidget() {
     setMessages(retryMessages);
     assistant.mutate({ conversationId: conversationId ?? undefined, messages: retryMessages });
   };
-  return <div className="fixed bottom-20 right-4 z-50 sm:bottom-6 sm:right-6"><div className={cn("mb-3 w-[calc(100vw-2rem)] max-w-[390px] origin-bottom-right transition-all duration-200 sm:w-[390px]", open ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0")} aria-hidden={!open}><Card className="overflow-hidden rounded-[1.5rem] border-emerald-950/10 bg-background shadow-[0_24px_70px_-24px_rgba(13,68,55,0.65)] dark:border-white/10"><CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-3"><div><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4 text-[#a8792c]" />Elimubora360 assistant</CardTitle><CardDescription className="mt-1 text-xs">Ask for quick navigation or grading guidance.</CardDescription></div><Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => setOpen(false)} aria-label="Close AI assistant"><X className="h-4 w-4" /></Button></CardHeader><CardContent className="p-0"><AIChatBox messages={messages as Message[]} onSendMessage={sendMessage} onRetryMessage={retryMessage} isLoading={assistant.isPending} height="420px" emptyStateMessage={`Hi ${user?.name?.split(/\\s+/)[0] || "there"}. How can I help?`} suggestedPrompts={["Where do I enter marks?", "Explain mean grades", "How do I print a report card?"]} /></CardContent></Card></div><Button type="button" onClick={() => setOpen(previous => !previous)} className="h-12 rounded-full bg-[#0d4437] px-5 text-white shadow-[0_14px_35px_-12px_rgba(13,68,55,0.8)] hover:bg-[#092f26]" aria-expanded={open} aria-controls="elimubora-ai-widget"><MessageCircle className="mr-2 h-5 w-5" />{open ? "Close assistant" : "Ask AI"}</Button></div>;
+  return (
+    <div className="pointer-events-none fixed bottom-20 right-4 z-50 sm:bottom-6 sm:right-6">
+      <div
+        className={cn(
+          "mb-3 w-[calc(100vw-2rem)] max-w-[390px] origin-bottom-right transition-all duration-200 sm:w-[390px]",
+          open ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0",
+        )}
+        aria-hidden={!open}
+      >
+        <Card className="overflow-hidden rounded-[1.5rem] border-emerald-950/10 bg-background shadow-[0_24px_70px_-24px_rgba(13,68,55,0.65)] dark:border-white/10">
+          <CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sparkles className="h-4 w-4 text-[#a8792c]" />Elimubora360 assistant
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs">Ask for quick navigation or grading guidance.</CardDescription>
+            </div>
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => setOpen(false)} aria-label="Close AI assistant">
+              <X className="h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            <AIChatBox
+              messages={messages as Message[]}
+              onSendMessage={sendMessage}
+              onRetryMessage={retryMessage}
+              isLoading={assistant.isPending}
+              height="420px"
+              emptyStateMessage={`Hi ${user?.name?.split(/\\s+/)[0] || "there"}. How can I help?`}
+              suggestedPrompts={["Where do I enter marks?", "Explain mean grades", "How do I print a report card?"]}
+            />
+          </CardContent>
+        </Card>
+      </div>
+      <Button
+        type="button"
+        onClick={() => setOpen(previous => !previous)}
+        className="pointer-events-auto h-12 rounded-full bg-[#0d4437] px-5 text-white shadow-[0_14px_35px_-12px_rgba(13,68,55,0.8)] hover:bg-[#092f26]"
+        aria-expanded={open}
+        aria-controls="elimubora-ai-widget"
+      >
+        <MessageCircle className="mr-2 h-5 w-5" />{open ? "Close assistant" : "Ask AI"}
+      </Button>
+    </div>
+  );
 }
 export default function Home() {
   const { user } = useAuth();
