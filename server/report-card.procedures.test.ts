@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { academicYears, assessments, marks, reportCards, reportExports, schoolClasses, schools, students, subjects, teacherAssignments, teachers, terms, users } from "../drizzle/schema";
+import { academicYears, assessments, marks, reportCards, reportExports, schoolClasses, schools, studentSubjects, students, subjects, teacherAssignments, teachers, terms, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -33,7 +33,7 @@ function fakeDb(initial: Map<unknown, any[]>, options: { publishedOnly?: boolean
     select: () => query(),
     insert: () => ({
       values: async (values: any) => {
-        const table = values.resultSnapshot !== undefined ? reportCards : values.reportType !== undefined ? reportExports : users;
+        const table = values.resultSnapshot !== undefined ? reportCards : values.assessmentType !== undefined ? assessments : values.assessmentId !== undefined ? marks : values.reportType !== undefined ? reportExports : users;
         const row = { ...values, id: values.id ?? nextId++ };
         initial.set(table, [...(initial.get(table) ?? []), row]);
       },
@@ -103,6 +103,48 @@ describe("report-card procedures", () => {
     expect(saved).toMatchObject({ schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, overallGrade: "A", teacherComment: "Keep building on this progress." });
     expect(saved.resultSnapshot).toEqual([expect.objectContaining({ subject: "Mathematics", subjectCode: "MAT", score: 82, maxMarks: 100, grade: "A", gradePoints: 12 })]);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.created", actorUserId: 201, entityType: "reportCard", entityId: saved.id, metadata: expect.objectContaining({ studentId: 11, termId: 31, subjectCount: 1, overallGrade: "A" }) }));
+  });
+
+  it("opens every assigned subject and saves direct marks without prior assessments", async () => {
+    const tables = tablesWithMarks();
+    tables.set(marks, []);
+    tables.set(assessments, []);
+    tables.set(studentSubjects, [{ id: 51, studentId: 11, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT" }]);
+    tables.set(teachers, [{ id: 91, schoolId: 1, userId: 501, employmentStatus: "active" }]);
+    tables.set(teacherAssignments, [{ id: 81, schoolId: 1, teacherId: 91, classId: 41, subjectId: 51, academicYearId: 21, termId: 31 }]);
+    dbState.current = fakeDb(tables);
+    vi.mocked(writeAuditLog).mockClear();
+
+    const caller = appRouter.createCaller(context("principal", 201));
+    const sheet = await caller.school.reportCards.editableSheet({ studentId: 11, academicYearId: 21, termId: 31, classId: 41 });
+    expect(sheet.rows).toEqual([{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: null, maxMarks: 100, comment: "" }]);
+    expect(tables.get(assessments)).toHaveLength(0);
+
+    const savedResult = await caller.school.reportCards.saveEditableSheet({ studentId: 11, academicYearId: 21, termId: 31, classId: 41, rows: [{ subjectId: 51, score: 86, maxMarks: 100 }] });
+    const saved = tables.get(reportCards)?.[0];
+    expect(savedResult).toMatchObject({ success: true, updated: false, subjectCount: 1, gradebookSyncedSubjectCount: 1, average: 86, overallGrade: "A" });
+    expect(saved).toMatchObject({ schoolId: 1, studentId: 11, title: "Term 1 Report Card", publishedAt: null, averagePercentage: "86" });
+    expect(saved.resultSnapshot).toEqual([expect.objectContaining({ subjectId: 51, subject: "Mathematics", score: 86, maxMarks: 100, grade: "A", assessment: "Term report mark" })]);
+    expect(tables.get(assessments)).toHaveLength(1);
+    expect(tables.get(assessments)?.[0]).toMatchObject({ title: "Term Report - MAT", maxMarks: "100", classId: 41, termId: 31 });
+    expect(tables.get(marks)?.[0]).toMatchObject({ assessmentId: tables.get(assessments)?.[0].id, studentId: 11, subjectId: 51, score: "86", grade: "A", teacherId: 91 });
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "report_card.editable_sheet_saved", actorUserId: 201 }));
+
+    const updatedResult = await caller.school.reportCards.saveEditableSheet({ studentId: 11, academicYearId: 21, termId: 31, classId: 41, rows: [{ subjectId: 51, score: 91, maxMarks: 100 }] });
+    expect(updatedResult).toMatchObject({ updated: true, gradebookSyncedSubjectCount: 1 });
+    expect(tables.get(assessments)).toHaveLength(1);
+    expect(tables.get(marks)).toHaveLength(1);
+    expect(tables.get(marks)?.[0].score).toBe("91");
+  });
+
+  it("requires one valid mark for every subject in the editable sheet", async () => {
+    const tables = tablesWithMarks();
+    tables.set(marks, []);
+    tables.set(studentSubjects, [{ id: 51, studentId: 11, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT" }, { id: 52, studentId: 11, subjectId: 52, schoolId: 1, name: "English", code: "ENG" }]);
+    dbState.current = fakeDb(tables);
+
+    await expect(appRouter.createCaller(context("principal", 201)).school.reportCards.saveEditableSheet({ studentId: 11, academicYearId: 21, termId: 31, classId: 41, rows: [{ subjectId: 51, score: 82, maxMarks: 100 }] })).rejects.toThrow("exactly one mark for every subject");
+    expect(tables.get(reportCards)).toHaveLength(0);
   });
 
   it("keeps draft report cards hidden from learners until the batch is published", async () => {

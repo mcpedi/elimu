@@ -1003,6 +1003,104 @@ export const schoolRouter = router({
   }),
 
   reportCards: router({
+    editableSheet: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const [student] = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo, currentClassId: students.currentClassId }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Learner not found in this school." });
+      if (student.currentClassId !== input.classId) throw new TRPCError({ code: "BAD_REQUEST", message: "The learner must belong to the selected class." });
+      const [classRecord] = await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!classRecord) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found in this school." });
+      const [termRecord] = await db.select({ id: terms.id, name: terms.name, academicYearId: terms.academicYearId }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
+      if (!termRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term from the selected academic year." });
+      let subjectRows = await db.select({ id: subjects.id, name: subjects.name, code: subjects.code }).from(studentSubjects).innerJoin(subjects, eq(studentSubjects.subjectId, subjects.id)).where(and(eq(studentSubjects.studentId, student.id), eq(subjects.schoolId, school.id))).orderBy(asc(subjects.name));
+      if (!subjectRows.length) subjectRows = await db.select({ id: subjects.id, name: subjects.name, code: subjects.code }).from(teacherAssignments).innerJoin(subjects, eq(teacherAssignments.subjectId, subjects.id)).where(and(eq(teacherAssignments.classId, input.classId), eq(subjects.schoolId, school.id))).orderBy(asc(subjects.name));
+      const uniqueSubjects = Array.from(new Map(subjectRows.map(subject => [subject.id, subject])).values());
+      if (!uniqueSubjects.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No subjects are assigned to this learner or class yet. Assign the learner's subjects in the Students workspace, or configure class subject assignments first." });
+      const [existing] = await db.select({ id: reportCards.id, title: reportCards.title, resultSnapshot: reportCards.resultSnapshot, teacherComment: reportCards.teacherComment, publishedAt: reportCards.publishedAt }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, student.id), eq(reportCards.termId, input.termId))).limit(1);
+      const savedBySubject = new Map<number, (typeof existing extends undefined ? never : NonNullable<typeof existing>["resultSnapshot"][number])>();
+      for (const result of existing?.resultSnapshot ?? []) savedBySubject.set(result.subjectId, result);
+      return {
+        student,
+        classRecord,
+        term: termRecord,
+        title: existing?.title ?? `${termRecord.name} Report Card`,
+        teacherComment: existing?.teacherComment ?? "",
+        existingReportCardId: existing?.id ?? null,
+        wasPublished: Boolean(existing?.publishedAt),
+        rows: uniqueSubjects.map(subject => {
+          const saved = savedBySubject.get(subject.id);
+          return { subjectId: subject.id, subject: subject.name, subjectCode: subject.code, score: saved?.score ?? null, maxMarks: saved?.maxMarks ?? 100, comment: saved?.comment ?? "" };
+        }),
+      };
+    }),
+    saveEditableSheet: protectedProcedure.input(z.object({
+      studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(),
+      title: z.string().trim().min(2).max(140).optional(), teacherComment: z.string().trim().max(1200).optional(),
+      rows: z.array(z.object({ subjectId: z.number().int().positive(), score: z.number().min(0).max(10000), maxMarks: z.number().positive().max(10000), comment: z.string().trim().max(500).optional() }).refine(row => row.score <= row.maxMarks, { message: "A subject score cannot exceed its maximum marks." })).min(1).max(100),
+    })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const [student] = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, currentClassId: students.currentClassId }).from(students).where(and(eq(students.id, input.studentId), eq(students.schoolId, school.id))).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Learner not found in this school." });
+      if (student.currentClassId !== input.classId) throw new TRPCError({ code: "BAD_REQUEST", message: "The learner must belong to the selected class." });
+      const [classRecord] = await db.select({ id: schoolClasses.id, classTeacherId: schoolClasses.classTeacherId }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!classRecord) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found in this school." });
+      const [termRecord] = await db.select({ id: terms.id, name: terms.name, academicYearId: terms.academicYearId }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
+      if (!termRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term from the selected academic year." });
+      let subjectRows = await db.select({ id: subjects.id, name: subjects.name, code: subjects.code }).from(studentSubjects).innerJoin(subjects, eq(studentSubjects.subjectId, subjects.id)).where(and(eq(studentSubjects.studentId, student.id), eq(subjects.schoolId, school.id))).orderBy(asc(subjects.name));
+      if (!subjectRows.length) subjectRows = await db.select({ id: subjects.id, name: subjects.name, code: subjects.code }).from(teacherAssignments).innerJoin(subjects, eq(teacherAssignments.subjectId, subjects.id)).where(and(eq(teacherAssignments.classId, input.classId), eq(subjects.schoolId, school.id))).orderBy(asc(subjects.name));
+      const allowedSubjectIds = new Set(subjectRows.map(subject => subject.id));
+      const submittedIds = input.rows.map(row => row.subjectId);
+      if (!allowedSubjectIds.size) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No subjects are assigned to this learner or class yet." });
+      if (submittedIds.length !== allowedSubjectIds.size || new Set(submittedIds).size !== submittedIds.length || submittedIds.some(id => !allowedSubjectIds.has(id))) throw new TRPCError({ code: "BAD_REQUEST", message: "The editable sheet must contain exactly one mark for every subject assigned to this learner." });
+      const assessmentDate = new Date().toISOString().slice(0, 10);
+      const resultSnapshot = subjectRows.map(subject => {
+        const entered = input.rows.find(row => row.subjectId === subject.id)!;
+        const grade = calculateGrade(entered.score, entered.maxMarks, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE);
+        return { subjectId: subject.id, subject: subject.name, subjectCode: subject.code, score: entered.score, maxMarks: entered.maxMarks, grade: grade.grade, gradePoints: grade.points, assessment: "Term report mark", assessmentDate, comment: entered.comment?.trim() || null };
+      });
+      const subjectIds = resultSnapshot.map(row => row.subjectId);
+      const subjectAssignments = await db.select({ subjectId: teacherAssignments.subjectId, teacherId: teacherAssignments.teacherId }).from(teacherAssignments).where(and(eq(teacherAssignments.schoolId, school.id), eq(teacherAssignments.classId, input.classId), eq(teacherAssignments.academicYearId, input.academicYearId), inArray(teacherAssignments.subjectId, subjectIds), or(eq(teacherAssignments.termId, input.termId), isNull(teacherAssignments.termId))));
+      const candidateTeacherIds = Array.from(new Set([...subjectAssignments.map(assignment => assignment.teacherId), ...(classRecord.classTeacherId ? [classRecord.classTeacherId] : [])]));
+      const validTeachers = candidateTeacherIds.length ? await db.select({ id: teachers.id }).from(teachers).where(and(eq(teachers.schoolId, school.id), eq(teachers.employmentStatus, "active"), inArray(teachers.id, candidateTeacherIds))) : [];
+      const validTeacherIds = new Set(validTeachers.map(teacher => teacher.id));
+      const assignmentTeacherBySubject = new Map<number, number>();
+      for (const assignment of subjectAssignments) if (validTeacherIds.has(assignment.teacherId) && !assignmentTeacherBySubject.has(assignment.subjectId)) assignmentTeacherBySubject.set(assignment.subjectId, assignment.teacherId);
+      let gradebookSyncedSubjectCount = 0;
+      for (const row of resultSnapshot) {
+        const teacherId = assignmentTeacherBySubject.get(row.subjectId) ?? (classRecord.classTeacherId && validTeacherIds.has(classRecord.classTeacherId) ? classRecord.classTeacherId : undefined);
+        if (!teacherId) continue;
+        const title = `Term Report - ${row.subjectCode}`;
+        let [assessment] = await db.select({ id: assessments.id }).from(assessments).where(and(eq(assessments.schoolId, school.id), eq(assessments.academicYearId, input.academicYearId), eq(assessments.termId, input.termId), eq(assessments.classId, input.classId), eq(assessments.title, title))).limit(1);
+        if (!assessment) {
+          await db.insert(assessments).values({ schoolId: school.id, academicYearId: input.academicYearId, termId: input.termId, classId: input.classId, title, assessmentType: "exam", maxMarks: String(row.maxMarks), assessmentDate: toDate(assessmentDate), isPublished: false, createdByUserId: ctx.user.id });
+          [assessment] = await db.select({ id: assessments.id }).from(assessments).where(and(eq(assessments.schoolId, school.id), eq(assessments.academicYearId, input.academicYearId), eq(assessments.termId, input.termId), eq(assessments.classId, input.classId), eq(assessments.title, title))).limit(1);
+        }
+        if (!assessment) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `The default assessment for ${row.subject} could not be created.` });
+        const [existingMark] = await db.select({ id: marks.id }).from(marks).where(and(eq(marks.assessmentId, assessment.id), eq(marks.studentId, student.id), eq(marks.subjectId, row.subjectId))).limit(1);
+        const markValues = { score: String(row.score), grade: row.grade, gradePoints: row.gradePoints, comment: row.comment, teacherId, updatedAt: new Date() };
+        if (existingMark) await db.update(marks).set(markValues).where(eq(marks.id, existingMark.id));
+        else await db.insert(marks).values({ assessmentId: assessment.id, studentId: student.id, subjectId: row.subjectId, ...markValues });
+        gradebookSyncedSubjectCount += 1;
+      }
+      const summary = summarizeMarks(resultSnapshot.map(row => ({ score: row.score, maxMarks: row.maxMarks, points: row.gradePoints })));
+      const values = {
+        title: input.title?.trim() || `${termRecord.name} Report Card`, resultSnapshot,
+        totalMarks: String(summary.total), averagePercentage: String(summary.average), meanPoints: String(summary.meanPoints),
+        overallGrade: calculateGrade(summary.average, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade,
+        teacherComment: input.teacherComment?.trim() || null, publishedAt: null, updatedByUserId: ctx.user.id, updatedAt: new Date(),
+      };
+      const [existing] = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, student.id), eq(reportCards.termId, input.termId))).limit(1);
+      if (existing) await db.update(reportCards).set(values).where(eq(reportCards.id, existing.id));
+      else await db.insert(reportCards).values({ schoolId: school.id, studentId: student.id, academicYearId: input.academicYearId, termId: input.termId, classId: input.classId, createdByUserId: ctx.user.id, ...values });
+      const [saved] = await db.select({ id: reportCards.id }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.studentId, student.id), eq(reportCards.termId, input.termId))).limit(1);
+      if (!saved) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Report card could not be saved." });
+      await writeAuditLog({ schoolId: school.id, actorUserId: ctx.user.id, action: existing ? "report_card.editable_sheet_updated" : "report_card.editable_sheet_saved", entityType: "reportCard", entityId: saved.id, metadata: { studentId: student.id, academicYearId: input.academicYearId, termId: input.termId, classId: input.classId, subjectCount: resultSnapshot.length, average: summary.average, overallGrade: values.overallGrade } });
+      return { success: true, reportCardId: saved.id, updated: Boolean(existing), subjectCount: resultSnapshot.length, gradebookSyncedSubjectCount, average: summary.average, overallGrade: values.overallGrade };
+    }),
     preview: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), title: z.string().trim().min(2).max(140).optional(), teacherComment: z.string().trim().max(1200).optional() })).query(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);
       const { db, school } = await getOperatingSchool();
