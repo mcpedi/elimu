@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, like, lt, or, sql } from "drizzle-orm";
 import { normalizeSuspensionReason } from "../account-suspension";
 import { z } from "zod";
 const notificationCategorySchema = z.enum(["finance", "academics", "announcements", "attendance", "account", "general"]);
@@ -341,6 +341,116 @@ export const schoolRouter = router({
         await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "platform.unassigned_account_assigned", entityType: "user", entityId: account.id, metadata: { role: input.role, schoolCode: school.code } });
         return { success: true };
       }),
+    dashboard: protectedProcedure.query(async ({ ctx }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform monitoring is restricted to designated platform administrators." });
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const [userStats] = await db.select({
+        total: count(),
+        active: count(sql`case when ${users.disabledAt} is null then 1 end`),
+        suspended: count(sql`case when ${users.disabledAt} is not null then 1 end`),
+        activeLast30Days: count(sql`case when ${users.lastSignedIn} >= now() - interval '30 days' then 1 end`),
+      }).from(users);
+      const roleRows = await db.select({ role: users.role, total: count() }).from(users).groupBy(users.role).orderBy(asc(users.role));
+      const [schoolStats] = await db.select({ total: count() }).from(schools);
+      const [unassignedStats] = await db.select({ total: count() }).from(users).where(isNull(users.schoolId));
+      const [failedStats] = await db.select({ total: count() }).from(auditLogs).where(and(eq(auditLogs.action, "auth.local_login_failed"), gte(auditLogs.createdAt, since)));
+      const recentActivity = await db.select({
+        id: auditLogs.id,
+        action: auditLogs.action,
+        entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId,
+        actorName: users.name,
+        createdAt: auditLogs.createdAt,
+      }).from(auditLogs).leftJoin(users, eq(users.id, auditLogs.actorUserId)).orderBy(desc(auditLogs.createdAt)).limit(12);
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.dashboard_viewed", entityType: "platform" });
+      return {
+        totals: {
+          users: Number(userStats?.total ?? 0),
+          activeUsers: Number(userStats?.active ?? 0),
+          suspendedUsers: Number(userStats?.suspended ?? 0),
+          activeLast30Days: Number(userStats?.activeLast30Days ?? 0),
+          schools: Number(schoolStats?.total ?? 0),
+          unassignedAccounts: Number(unassignedStats?.total ?? 0),
+          failedLogins24h: Number(failedStats?.total ?? 0),
+          platformAdministrators: Number(roleRows.length ? (await db.select({ total: count() }).from(users).where(and(eq(users.role, "super_admin"), eq(users.isPlatformAdmin, true))))[0]?.total ?? 0 : 0),
+        },
+        roles: roleRows.map(row => ({ role: row.role, total: Number(row.total ?? 0) })),
+        recentActivity,
+        health: { database: "healthy" as const, checkedAt: new Date() },
+      };
+    }),
+    users: protectedProcedure.input(z.object({
+      query: z.string().trim().max(120).optional(),
+      role: z.enum(["user", "super_admin", "principal", "deputy_principal", "teacher", "class_teacher", "bursar", "parent", "student"]).optional(),
+      status: z.enum(["active", "suspended"]).optional(),
+      schoolId: z.number().int().positive().optional(),
+      createdAfter: z.coerce.date().optional(),
+      createdBefore: z.coerce.date().optional(),
+      page: z.number().int().min(1).default(1),
+      pageSize: z.number().int().min(1).max(100).default(25),
+    })).query(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Global user management is restricted to designated platform administrators." });
+      const filters = [
+        input.role ? eq(users.role, input.role) : undefined,
+        input.status === "active" ? isNull(users.disabledAt) : input.status === "suspended" ? isNotNull(users.disabledAt) : undefined,
+        input.schoolId ? eq(users.schoolId, input.schoolId) : undefined,
+        input.createdAfter ? gte(users.createdAt, input.createdAfter) : undefined,
+        input.createdBefore ? lt(users.createdAt, input.createdBefore) : undefined,
+        input.query ? or(ilike(users.name, `%${input.query}%`), ilike(users.email, `%${input.query}%`)) : undefined,
+      ].filter(Boolean);
+      const where = filters.length ? and(...filters) : undefined;
+      const [totalRow] = await db.select({ total: count() }).from(users).where(where);
+      const rows = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, schoolId: users.schoolId, schoolName: schools.name, isPlatformAdmin: users.isPlatformAdmin, createdAt: users.createdAt, lastSignedIn: users.lastSignedIn, disabledAt: users.disabledAt })
+        .from(users).leftJoin(schools, eq(users.schoolId, schools.id)).where(where).orderBy(desc(users.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.user_directory_viewed", entityType: "platform", metadata: { page: input.page, pageSize: input.pageSize } });
+      return { rows, total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+    }),
+    setUserRole: protectedProcedure.input(z.object({ userId: z.number().int().positive(), role: schoolRoleSchema.exclude(["super_admin"]) })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Global user management is restricted to designated platform administrators." });
+      const [target] = await db.select({ id: users.id, role: users.role, schoolId: users.schoolId, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, input.userId)).limit(1);
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+      if (target.role === "super_admin" || target.isPlatformAdmin) throw new TRPCError({ code: "FORBIDDEN", message: "Super Administrator and platform-admin privileges are managed separately and cannot be changed here." });
+      await db.update(users).set({ role: input.role, updatedAt: new Date() }).where(eq(users.id, target.id));
+      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: target.schoolId, action: "platform.user_role_changed", entityType: "user", entityId: target.id, metadata: { previousRole: target.role, role: input.role } });
+      return { success: true };
+    }),
+    setUserStatus: protectedProcedure.input(z.object({ userId: z.number().int().positive(), suspended: z.boolean(), reason: z.string().trim().max(255).optional() })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Global user management is restricted to designated platform administrators." });
+      if (input.userId === ctx.user.id && input.suspended) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot suspend your own account." });
+      const [target] = await db.select({ id: users.id, role: users.role, schoolId: users.schoolId, isPlatformAdmin: users.isPlatformAdmin, disabledAt: users.disabledAt }).from(users).where(eq(users.id, input.userId)).limit(1);
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+      if (target.role === "super_admin" || target.isPlatformAdmin) throw new TRPCError({ code: "FORBIDDEN", message: "Super Administrator and platform-admin accounts require the dedicated protected access workflow." });
+      if (input.suspended && !target.disabledAt) await db.update(users).set({ disabledAt: new Date(), disabledReason: input.reason || "Suspended by platform administrator", updatedAt: new Date() }).where(eq(users.id, target.id));
+      if (!input.suspended && target.disabledAt) await db.update(users).set({ disabledAt: null, disabledReason: null, updatedAt: new Date() }).where(eq(users.id, target.id));
+      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: target.schoolId, action: input.suspended ? "platform.user_suspended" : "platform.user_reinstated", entityType: "user", entityId: target.id, metadata: { reason: input.suspended ? input.reason ?? "" : undefined } });
+      return { success: true, suspended: input.suspended };
+    }),
+    auditEvents: protectedProcedure.input(z.object({
+      query: z.string().trim().max(120).optional(),
+      actorUserId: z.number().int().positive().optional(),
+      from: z.coerce.date().optional(),
+      to: z.coerce.date().optional(),
+      page: z.number().int().min(1).default(1),
+      pageSize: z.number().int().min(1).max(100).default(25),
+    })).query(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform audit review is restricted to designated platform administrators." });
+      const filters = [
+        input.query ? ilike(auditLogs.action, `%${input.query}%`) : undefined,
+        input.actorUserId ? eq(auditLogs.actorUserId, input.actorUserId) : undefined,
+        input.from ? gte(auditLogs.createdAt, input.from) : undefined,
+        input.to ? lt(auditLogs.createdAt, input.to) : undefined,
+      ].filter(Boolean);
+      const where = filters.length ? and(...filters) : undefined;
+      const [totalRow] = await db.select({ total: count() }).from(auditLogs).where(where);
+      const rows = await db.select({ id: auditLogs.id, action: auditLogs.action, entityType: auditLogs.entityType, entityId: auditLogs.entityId, actorUserId: auditLogs.actorUserId, actorName: users.name, schoolId: auditLogs.schoolId, createdAt: auditLogs.createdAt })
+        .from(auditLogs).leftJoin(users, eq(users.id, auditLogs.actorUserId)).where(where).orderBy(desc(auditLogs.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+      return { rows, total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+    }),
     overview: protectedProcedure.query(async ({ ctx }) => {
       const { db, allowed } = await platformMonitorAccess(ctx.user);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Platform monitoring is restricted to designated platform administrators." });
@@ -352,7 +462,7 @@ export const schoolRouter = router({
           county: schools.county,
           createdAt: schools.createdAt,
           registeredUsers: sql<number>`count(${users.id})`,
-          activeUsers: sql<number>`sum(case when ${users.lastSignedIn} >= date_sub(utc_timestamp(), interval 30 day) then 1 else 0 end)`,
+          activeUsers: sql<number>`count(${users.id}) filter (where ${users.lastSignedIn} >= now() - interval '30 days')`,
         })
         .from(schools)
         .leftJoin(users, eq(users.schoolId, schools.id))

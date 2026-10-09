@@ -16,6 +16,8 @@ import { trpc } from "@/lib/trpc";
 import { AcademicWorkflowEntry, AccountStatusEntry, AnnouncementTargetingEntry, AttendanceExceptionEntry, ClassPerformanceRanking, DailyTasksSummary, FeesCollectionReport, InsightsReportEntry, ReportCardWorkflowEntry, StudentLifecycleEntry, StudentSubjectEntry, SubjectExamMarksEntry, TeacherWorkflowEntry, TimetableEntry } from "./ModuleWorkflows";
 import { StudentAccessEntry } from "./StudentAccessEntry";
 import { ClassTeacherAssignmentEntry } from "./ClassTeacherAssignmentEntry";
+import PlatformUserDirectory from "./PlatformUserDirectory";
+import PlatformAuditPanel from "./PlatformAuditPanel";
 import StudentPasswordCard from "@/components/StudentPasswordCard";
 import LocalAccountProvisioning from "@/components/LocalAccountProvisioning";
 import StudentReportCards from "@/components/StudentReportCards";
@@ -585,12 +587,15 @@ function TermSelect({ terms, yearId, value, onChange }: { terms: Array<{ id: num
 
 function PlatformMonitor() {
   const overview = trpc.school.platform.overview.useQuery();
-  if (overview.isLoading) return <DashboardSkeleton />;
+  const dashboard = trpc.school.platform.dashboard.useQuery(undefined, { refetchInterval: 60_000 });
+  if (overview.isLoading || dashboard.isLoading) return <DashboardSkeleton />;
   if (overview.error || !overview.data) return <ErrorState title="Platform monitoring is unavailable" description={overview.error?.message ?? "Refresh to try again."} onRetry={() => void overview.refetch()} />;
+  if (dashboard.error || !dashboard.data) return <ErrorState title="Platform dashboard is unavailable" description={dashboard.error?.message ?? "Refresh to try again."} onRetry={() => void dashboard.refetch()} />;
   const data = overview.data;
+  const system = dashboard.data;
   return <>
     <SectionHeading eyebrow="Platform-only oversight" title="School network monitor" description="Monitor registration and account-assignment health across the platform. This view does not expose learner, finance, or academic records.">
-      <Button variant="outline" onClick={() => void overview.refetch()} className="rounded-xl bg-white dark:bg-transparent"><Activity className="mr-2 h-4 w-4" />Refresh</Button>
+      <Button variant="outline" onClick={() => { void overview.refetch(); void dashboard.refetch(); }} className="rounded-xl bg-white dark:bg-transparent"><Activity className="mr-2 h-4 w-4" />Refresh</Button>
     </SectionHeading>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard label="Registered schools" value={data.totals.schools.toLocaleString()} note="School profiles on the platform" icon={Building2} />
@@ -598,6 +603,17 @@ function PlatformMonitor() {
       <MetricCard label="Active users" value={data.totals.activeUsers.toLocaleString()} note="Signed in during the past 30 days" icon={UserCheck} tone="green" />
       <MetricCard label="Unassigned accounts" value={data.totals.unassignedAccounts.toLocaleString()} note="Require school assignment review" icon={UserRoundX} tone={data.totals.unassignedAccounts ? "rose" : "gold"} />
     </div>
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <MetricCard label="Active accounts" value={system.totals.activeUsers.toLocaleString()} note="Not suspended" icon={UserCheck} tone="green" />
+      <MetricCard label="Suspended accounts" value={system.totals.suspendedUsers.toLocaleString()} note="Sign-in disabled" icon={UserRoundX} tone={system.totals.suspendedUsers ? "rose" : "gold"} />
+      <MetricCard label="Platform admins" value={system.totals.platformAdministrators.toLocaleString()} note="Designated Super Admins" icon={ShieldCheck} tone="blue" />
+      <MetricCard label="Failed logins (24h)" value={system.totals.failedLogins24h.toLocaleString()} note="Recorded local-auth failures" icon={Activity} tone={system.totals.failedLogins24h ? "rose" : "gold"} />
+    </div>
+    <div className="mt-5 grid gap-5 xl:grid-cols-2">
+      <Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader><CardTitle className="text-base">System health & account activity</CardTitle><CardDescription>Live database check and activity signals; refreshed every minute while this page is open.</CardDescription></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-emerald-50 p-3 dark:bg-emerald-950/25"><p className="text-xs text-slate-500">Database</p><p className="mt-1 font-semibold text-emerald-800 dark:text-emerald-300">Connected · checked {new Date(system.health.checkedAt).toLocaleTimeString()}</p></div><div className="rounded-xl bg-emerald-50 p-3 dark:bg-emerald-950/25"><p className="text-xs text-slate-500">Application API</p><p className="mt-1 font-semibold text-emerald-800 dark:text-emerald-300">Responding · platform data loaded</p></div><div className="rounded-xl bg-[#f4f7f5] p-3 dark:bg-white/5"><p className="text-xs text-slate-500">Signed in during last 30 days</p><p className="mt-1 text-xl font-semibold">{system.totals.activeLast30Days.toLocaleString()}</p></div><div className="rounded-xl bg-amber-50 p-3 dark:bg-amber-950/25"><p className="text-xs text-slate-500">Accounts awaiting assignment</p><p className="mt-1 text-xl font-semibold">{system.totals.unassignedAccounts.toLocaleString()}</p></div></CardContent></Card>
+      <Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader><CardTitle className="text-base">Users by role</CardTitle><CardDescription>Counts from registered user accounts.</CardDescription></CardHeader><CardContent className="space-y-3">{system.roles.length ? system.roles.map(row => { const percent = system.totals.users ? Math.round(row.total / system.totals.users * 100) : 0; return <div key={row.role}><div className="mb-1 flex justify-between gap-3 text-sm"><span className="capitalize">{row.role.replaceAll("_", " ")}</span><span className="tabular-nums text-slate-500">{row.total.toLocaleString()} · {percent}%</span></div><div className="h-2 overflow-hidden rounded-full bg-emerald-950/8 dark:bg-white/10"><div role="progressbar" aria-label={`${row.role} share`} aria-valuenow={percent} className="h-full rounded-full bg-[#0d7660]" style={{ width: `${percent}%` }} /></div></div>; }) : <EmptyText label="No user roles are registered yet." />}</CardContent></Card>
+    </div>
+    <Card className="mt-5 border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader><CardTitle className="text-base">Recent system activity</CardTitle><CardDescription>Latest recorded administrative and authentication events.</CardDescription></CardHeader><CardContent className="divide-y divide-emerald-950/7 dark:divide-white/7">{system.recentActivity.length ? system.recentActivity.map(event => <div key={event.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><div><p className="font-mono text-xs font-semibold">{event.action}</p><p className="mt-1 text-xs text-slate-500">{event.actorName || "System"} · {event.entityType}{event.entityId ? ` #${event.entityId}` : ""}</p></div><time className="text-xs text-slate-500">{new Date(event.createdAt).toLocaleString()}</time></div>) : <EmptyText label="No administrative activity has been recorded yet." />}</CardContent></Card>
     <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
       <Card className="border-emerald-950/8 bg-white/85 shadow-[0_14px_36px_-26px_rgba(10,65,48,0.28)] dark:border-white/8 dark:bg-[#172420]">
         <CardHeader><CardTitle className="text-base">Registered schools</CardTitle><CardDescription>Account-volume and recent-activity signals only. School operational records remain tenant-scoped.</CardDescription></CardHeader>
@@ -607,6 +623,8 @@ function PlatformMonitor() {
     </div>
     <div className="mt-5"><PlatformSchoolOnboarding schools={data.schools} unassignedAccounts={data.unassignedAccounts} onRefresh={() => void overview.refetch()} /></div>
     <div className="mt-5"><PlatformAdministratorManagement /></div>
+    <div className="mt-5"><PlatformUserDirectory /></div>
+    <div className="mt-5"><PlatformAuditPanel /></div>
   </>;
 }
 

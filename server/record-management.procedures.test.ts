@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { departments, schoolClasses, schools, assessments, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments, users } from "../drizzle/schema";
+import { auditLogs, departments, schoolClasses, schools, assessments, studentFeeAccounts, studentSubjects, subjects, teacherAssignments, teacherAttendance, teachers, timetableSlots, marks, assignments, students, feeStructures, payments, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
 
@@ -24,7 +24,8 @@ function fakeDb(rows: Map<unknown, unknown[]>) {
     where: () => query(table),
     groupBy: () => query(table),
     orderBy: () => query(table),
-    limit: async () => rows.get(table) ?? [],
+    limit: () => query(table),
+    offset: () => query(table),
     then: (resolve: any, reject?: any) => Promise.resolve(rows.get(table) ?? []).then(resolve, reject),
   });
   return {
@@ -127,6 +128,27 @@ describe("record-management procedures", () => {
 
     dbState.current = fakeDb(new Map([[schools, [targetSchool]], [users, [{ id: 29, schoolId: 9, role: "teacher" }]]]));
     await expect(caller.school.platform.assignUnassignedAccount({ schoolId: 2, userId: 29, role: "teacher" })).rejects.toThrow("already assigned to a school");
+  });
+
+  it("restricts the system dashboard, global user directory, and audit trail to designated platform administrators", async () => {
+    dbState.current = fakeDb(new Map([[schools, []], [users, []], [auditLogs, []]]));
+    const ordinary = appRouter.createCaller(context("super_admin"));
+    await expect(ordinary.school.platform.dashboard()).rejects.toThrow("restricted to designated platform administrators");
+    await expect(ordinary.school.platform.users({ page: 1, pageSize: 20 })).rejects.toThrow("restricted to designated platform administrators");
+    await expect(ordinary.school.platform.auditEvents({ page: 1, pageSize: 25 })).rejects.toThrow("restricted to designated platform administrators");
+
+    const platform = appRouter.createCaller(context("super_admin", 1, true));
+    await expect(platform.school.platform.dashboard()).resolves.toMatchObject({ health: { database: "healthy" }, totals: expect.any(Object), roles: [], recentActivity: [] });
+    await expect(platform.school.platform.users({ page: 1, pageSize: 20 })).resolves.toMatchObject({ rows: [], page: 1, pageSize: 20 });
+    await expect(platform.school.platform.auditEvents({ page: 1, pageSize: 25 })).resolves.toMatchObject({ rows: [], page: 1, pageSize: 25 });
+  });
+
+  it("prevents global role escalation and protects Super Admin accounts from directory status changes", async () => {
+    dbState.current = fakeDb(new Map([[users, [{ id: 42, role: "super_admin", isPlatformAdmin: true, disabledAt: null }]]]));
+    const platform = appRouter.createCaller(context("super_admin", 1, true));
+    await expect(platform.school.platform.setUserRole({ userId: 42, role: "principal" })).rejects.toThrow("managed separately");
+    await expect(platform.school.platform.setUserStatus({ userId: 42, suspended: true })).rejects.toThrow("protected access workflow");
+    await expect(platform.school.platform.setUserStatus({ userId: 1, suspended: true })).rejects.toThrow("cannot suspend your own account");
   });
 
   it("fails closed for an authenticated account without a school binding", async () => {
