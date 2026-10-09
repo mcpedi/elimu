@@ -1190,6 +1190,7 @@ export const schoolRouter = router({
     classSheet: protectedProcedure.input(z.object({ academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive().optional(), form: z.enum(["Form 1", "Form 2", "Form 3", "Form 4"]).optional() }).refine(input => Boolean(input.classId) !== Boolean(input.form), { message: "Choose one class or one form." })).query(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);
       const { db, school } = await getOperatingSchool();
+      const gradeScale = school.gradeScale?.length ? school.gradeScale : DEFAULT_KENYAN_GRADING_SCALE;
       if (input.classId) await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
       else if (!administrativeRoles.includes(ctx.user.role as (typeof administrativeRoles)[number])) throw new TRPCError({ code: "FORBIDDEN", message: "Only school leadership can view results for an entire form." });
       const [termRecord] = await db.select({ id: terms.id, name: terms.name, academicYearId: terms.academicYearId }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
@@ -1199,7 +1200,13 @@ export const schoolRouter = router({
       const classIds = classRows.map(row => row.id);
       const learners = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo, classId: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(students).innerJoin(schoolClasses, eq(students.currentClassId, schoolClasses.id)).where(and(eq(students.schoolId, school.id), eq(students.status, "active"), inArray(students.currentClassId, classIds)));
       learners.sort((a, b) => a.form.localeCompare(b.form, undefined, { numeric: true }) || a.stream.localeCompare(b.stream) || a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.admissionNo.localeCompare(b.admissionNo));
-      if (!learners.length) return { school: { name: school.name, code: school.code, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, term: termRecord, scope: input.classId ? "class" as const : "form" as const, form: input.form ?? classRows[0].form, classes: classRows, subjects: [], students: [], classSummaries: [], scopeMean: null, studentsWithMarks: 0, totalMarkEntries: 0 };
+      const makeGradeDistribution = (rows: Array<{ meanGrade: string | null }>) => {
+        const gradedLearners = rows.filter(row => row.meanGrade !== null).length;
+        const counts = new Map<string, number>();
+        for (const row of rows) if (row.meanGrade !== null) counts.set(row.meanGrade, (counts.get(row.meanGrade) ?? 0) + 1);
+        return { gradedLearners, bands: [...gradeScale].sort((a, b) => b.min - a.min).map(band => ({ grade: band.grade, count: counts.get(band.grade) ?? 0, percentage: gradedLearners ? Number(((counts.get(band.grade) ?? 0) / gradedLearners * 100).toFixed(1)) : 0 })) };
+      };
+      if (!learners.length) return { school: { name: school.name, code: school.code, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, term: termRecord, scope: input.classId ? "class" as const : "form" as const, form: input.form ?? classRows[0].form, classes: classRows, subjects: [], students: [], classSummaries: [], scopeMean: null, studentsWithMarks: 0, totalMarkEntries: 0, gradeDistribution: makeGradeDistribution([]) };
       const learnerIds = learners.map(learner => learner.id);
       const enrolled = await db.select({ studentId: studentSubjects.studentId, subjectId: subjects.id, subject: subjects.name, subjectCode: subjects.code }).from(studentSubjects).innerJoin(subjects, eq(studentSubjects.subjectId, subjects.id)).where(and(inArray(studentSubjects.studentId, learnerIds), eq(subjects.schoolId, school.id)));
       const assignments = await db.select({ classId: teacherAssignments.classId, subjectId: subjects.id, subject: subjects.name, subjectCode: subjects.code }).from(teacherAssignments).innerJoin(subjects, eq(teacherAssignments.subjectId, subjects.id)).where(and(eq(teacherAssignments.schoolId, school.id), eq(teacherAssignments.academicYearId, input.academicYearId), inArray(teacherAssignments.classId, classIds), or(eq(teacherAssignments.termId, input.termId), isNull(teacherAssignments.termId))));
@@ -1230,15 +1237,15 @@ export const schoolRouter = router({
         });
         const marked = marksForLearner.filter(row => row.score !== null && row.maxMarks > 0);
         const meanPercentage = marked.length ? Number((marked.reduce((sum, row) => sum + row.score! / row.maxMarks * 100, 0) / marked.length).toFixed(2)) : null;
-        return { ...learner, subjects: marksForLearner, subjectCount: learnerSubjects.length, marksEntered: marked.length, meanPercentage, meanGrade: meanPercentage === null ? null : calculateGrade(meanPercentage, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade };
+        return { ...learner, subjects: marksForLearner, subjectCount: learnerSubjects.length, marksEntered: marked.length, meanPercentage, meanGrade: meanPercentage === null ? null : calculateGrade(meanPercentage, 100, gradeScale).grade };
       });
       const summarise = (rows: typeof resultStudents) => {
         const withMarks = rows.filter(row => row.meanPercentage !== null);
-        return { totalStudents: rows.length, studentsWithMarks: withMarks.length, averagePercentage: withMarks.length ? Number((withMarks.reduce((sum, row) => sum + row.meanPercentage!, 0) / withMarks.length).toFixed(2)) : null, meanGrade: withMarks.length ? calculateGrade(withMarks.reduce((sum, row) => sum + row.meanPercentage!, 0) / withMarks.length, 100, school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE).grade : null };
+        return { totalStudents: rows.length, studentsWithMarks: withMarks.length, averagePercentage: withMarks.length ? Number((withMarks.reduce((sum, row) => sum + row.meanPercentage!, 0) / withMarks.length).toFixed(2)) : null, meanGrade: withMarks.length ? calculateGrade(withMarks.reduce((sum, row) => sum + row.meanPercentage!, 0) / withMarks.length, 100, gradeScale).grade : null };
       };
       const classSummaries = classRows.map(classRow => ({ classId: classRow.id, form: classRow.form, stream: classRow.stream, ...summarise(resultStudents.filter(learner => learner.classId === classRow.id)) }));
       const summary = summarise(resultStudents);
-      return { school: { name: school.name, code: school.code, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, term: termRecord, scope: input.classId ? "class" as const : "form" as const, form: input.form ?? classRows[0].form, classes: classRows, subjects: Array.from(allSubjects.values()).sort((a, b) => a.name.localeCompare(b.name)), students: resultStudents, classSummaries, scopeMean: summary.averagePercentage, studentsWithMarks: summary.studentsWithMarks, totalMarkEntries: resultStudents.reduce((sum, learner) => sum + learner.marksEntered, 0) };
+      return { school: { name: school.name, code: school.code, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null }, term: termRecord, scope: input.classId ? "class" as const : "form" as const, form: input.form ?? classRows[0].form, classes: classRows, subjects: Array.from(allSubjects.values()).sort((a, b) => a.name.localeCompare(b.name)), students: resultStudents, classSummaries, scopeMean: summary.averagePercentage, studentsWithMarks: summary.studentsWithMarks, totalMarkEntries: resultStudents.reduce((sum, learner) => sum + learner.marksEntered, 0), gradeDistribution: makeGradeDistribution(resultStudents) };
     }),
     preview: protectedProcedure.input(z.object({ studentId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive(), classId: z.number().int().positive(), title: z.string().trim().min(2).max(140).optional(), teacherComment: z.string().trim().max(1200).optional() })).query(async ({ ctx, input }) => {
       requireRole(ctx.user, academicRoles);

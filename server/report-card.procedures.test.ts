@@ -151,18 +151,19 @@ describe("report-card procedures", () => {
     const tables = tablesWithMarks();
     tables.set(students, [learner, { id: 12, schoolId: 1, userId: 102, admissionNo: "ADM-0043", firstName: "Brian", middleName: null, lastName: "Achieng", currentClassId: 41, classId: 41, form: "Form 2", stream: "East", status: "active" }]);
     tables.set(studentSubjects, [{ id: 51, studentId: 11, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT", subject: "Mathematics", subjectCode: "MAT" }, { id: 52, studentId: 12, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT", subject: "Mathematics", subjectCode: "MAT" }]);
-    tables.set(reportCards, [{ id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 82, maxMarks: 100, grade: "A", gradePoints: 12, comment: null }] }, { id: 101, schoolId: 1, studentId: 12, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 90, maxMarks: 100, grade: "A", gradePoints: 12, comment: null }] }]);
+    tables.set(reportCards, [{ id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 82, maxMarks: 100, grade: "A", gradePoints: 12, comment: null }] }, { id: 101, schoolId: 1, studentId: 12, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 60, maxMarks: 100, grade: "B-", gradePoints: 8, comment: null }] }]);
     dbState.current = fakeDb(tables);
     const caller = appRouter.createCaller(context("principal", 201));
 
     const classResult = await caller.school.reportCards.classSheet({ classId: 41, academicYearId: 21, termId: 31 });
-    expect(classResult).toMatchObject({ scope: "class", form: "Form 2", scopeMean: 86, studentsWithMarks: 2, totalMarkEntries: 2 });
+    expect(classResult).toMatchObject({ scope: "class", form: "Form 2", scopeMean: 71, studentsWithMarks: 2, totalMarkEntries: 2 });
     expect(classResult.students.map(row => row.lastName)).toEqual(["Achieng", "Otieno"]);
     expect(classResult.students[1]).toMatchObject({ firstName: "Amina", lastName: "Otieno", admissionNo: "ADM-0042", meanPercentage: 82, meanGrade: "A" });
     expect(classResult.students[1].subjects[0]).toMatchObject({ subject: "Mathematics", subjectCode: "MAT", score: 82 });
 
     const formResult = await caller.school.reportCards.classSheet({ form: "Form 2", academicYearId: 21, termId: 31 });
-    expect(formResult).toMatchObject({ scope: "form", form: "Form 2", scopeMean: 86, classSummaries: [{ form: "Form 2", stream: "East", averagePercentage: 86 }] });
+    expect(formResult).toMatchObject({ scope: "form", form: "Form 2", scopeMean: 71, classSummaries: [{ form: "Form 2", stream: "East", averagePercentage: 71 }] });
+    expect(formResult.gradeDistribution).toMatchObject({ gradedLearners: 2, bands: expect.arrayContaining([{ grade: "A", count: 1, percentage: 50 }, { grade: "B-", count: 1, percentage: 50 }, { grade: "E", count: 0, percentage: 0 }]) });
     await expect(appRouter.createCaller(context("class_teacher", 402)).school.reportCards.classSheet({ form: "Form 2", academicYearId: 21, termId: 31 })).rejects.toThrow("Only school leadership");
   });
 
