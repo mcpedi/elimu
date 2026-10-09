@@ -151,7 +151,10 @@ export const appRouter = router({
     me: publicProcedure.query(opts => opts.ctx.user),
     loginLocal: publicProcedure.input(z.object({ identifier: z.string().trim().min(2).max(160), password: z.string().min(1).max(128) })).mutation(async ({ ctx, input }) => {
       const result = await loginLocalUser(input.identifier, input.password);
-      if (!result.ok) throw new TRPCError({ code: result.reason === "locked" ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED", message: result.reason === "locked" ? "Too many failed attempts. Try again in 15 minutes." : "Invalid username or password." });
+      if (!result.ok) {
+        try { await writeAuditLog({ action: "auth.local_login_failed", entityType: "auth_attempt", metadata: { reason: result.reason } }); } catch { /* Login failure reporting must not expose database errors to unauthenticated callers. */ }
+        throw new TRPCError({ code: result.reason === "locked" ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED", message: result.reason === "locked" ? "Too many failed attempts. Try again in 15 minutes." : "Invalid username or password." });
+      }
       const token = await createLocalSession(result.user.id);
       ctx.res.cookie(LOCAL_SESSION_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
       await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role } });
