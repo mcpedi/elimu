@@ -2839,6 +2839,7 @@ import { createHash, randomBytes as randomBytes2 } from "node:crypto";
 import { and as and3, eq as eq4, gt as gt2, or as or3 } from "drizzle-orm";
 var LOCAL_SESSION_COOKIE = "elimubora_local_session";
 var LOCAL_SESSION_TTL_MS = 1e3 * 60 * 60 * 24 * 30;
+var LOCAL_SESSION_SHORT_TTL_MS = 1e3 * 60 * 60 * 12;
 var LOCAL_SETUP_TTL_MS = 1e3 * 60 * 60 * 24;
 function normalizeLocalUsername(value) {
   return value.trim().toLowerCase().replace(/\s+/g, "");
@@ -2855,12 +2856,13 @@ function readLocalSessionToken(req) {
   const pair = cookieHeader.split(";").map((value) => value.trim()).find((value) => value.startsWith(`${LOCAL_SESSION_COOKIE}=`));
   return pair ? decodeURIComponent(pair.slice(LOCAL_SESSION_COOKIE.length + 1)) : void 0;
 }
-async function createLocalSession(userId) {
+async function createLocalSession(userId, rememberMe = false) {
   const db = await getDb();
   if (!db) throw new Error("Database service is unavailable.");
   const token = randomBytes2(32).toString("base64url");
   const now = /* @__PURE__ */ new Date();
-  await db.insert(localAuthSessions).values({ userId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + LOCAL_SESSION_TTL_MS), lastSeenAt: now });
+  const ttl = rememberMe ? LOCAL_SESSION_TTL_MS : LOCAL_SESSION_SHORT_TTL_MS;
+  await db.insert(localAuthSessions).values({ userId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + ttl), lastSeenAt: now });
   return token;
 }
 async function clearLocalSession(token) {
@@ -2879,6 +2881,26 @@ async function authenticateLocalRequest(req) {
   if (!row || row.user.disabledAt) return null;
   await db.update(localAuthSessions).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq4(localAuthSessions.id, row.session.id));
   return row.user;
+}
+async function resetLocalPassword(input) {
+  const db = await getDb();
+  if (!db) throw new Error("Database service is unavailable.");
+  const [credential] = await db.select().from(localAuthCredentials).where(eq4(localAuthCredentials.userId, input.userId)).limit(1);
+  const now = /* @__PURE__ */ new Date();
+  if (!credential?.setupCodeHash || !credential.setupCodeExpiresAt || credential.setupCodeExpiresAt.getTime() <= now.getTime()) throw new Error("Recovery code invalid or expired.");
+  if (credential.lockedUntil && credential.lockedUntil.getTime() > now.getTime()) throw new Error("Too many failed attempts. Try again in 15 minutes.");
+  const validCode = await verifyStudentSecret(input.setupCode.trim().toUpperCase(), credential.setupCodeHash);
+  if (!validCode) {
+    const failedAttempts = Number(credential.failedAttempts ?? 0) + 1;
+    const lockedUntil = failedAttempts >= STUDENT_LOGIN_MAX_ATTEMPTS ? new Date(now.getTime() + STUDENT_LOGIN_LOCK_MS) : null;
+    await db.update(localAuthCredentials).set({ failedAttempts, lockedUntil, updatedAt: now }).where(eq4(localAuthCredentials.userId, input.userId));
+    throw new Error(lockedUntil ? "Too many failed attempts. Try again in 15 minutes." : "Recovery code invalid or expired.");
+  }
+  const passwordHash = await hashStudentSecret(input.password);
+  const [updated] = await db.update(localAuthCredentials).set({ passwordHash, setupCodeHash: null, setupCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null, updatedAt: now }).where(and3(eq4(localAuthCredentials.userId, input.userId), eq4(localAuthCredentials.setupCodeHash, credential.setupCodeHash), gt2(localAuthCredentials.setupCodeExpiresAt, now))).returning({ id: localAuthCredentials.id });
+  if (!updated) throw new Error("Recovery code invalid or expired.");
+  await db.delete(localAuthSessions).where(eq4(localAuthSessions.userId, input.userId));
+  return { success: true };
 }
 async function issueLocalSetupCode(userId) {
   const db = await getDb();
@@ -3081,7 +3103,7 @@ var appRouter = router({
   }),
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
-    loginLocal: publicProcedure.input(z4.object({ identifier: z4.string().trim().min(2).max(160), password: z4.string().min(1).max(128) })).mutation(async ({ ctx, input }) => {
+    loginLocal: publicProcedure.input(z4.object({ identifier: z4.string().trim().min(2).max(160), password: z4.string().min(1).max(128), rememberMe: z4.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       const result = await loginLocalUser(input.identifier, input.password);
       if (!result.ok) {
         try {
@@ -3090,9 +3112,10 @@ var appRouter = router({
         }
         throw new TRPCError6({ code: result.reason === "locked" ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED", message: result.reason === "locked" ? "Too many failed attempts. Try again in 15 minutes." : "Invalid username or password." });
       }
-      const token = await createLocalSession(result.user.id);
-      ctx.res.cookie(LOCAL_SESSION_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1e3 });
-      await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role } });
+      const token = await createLocalSession(result.user.id, input.rememberMe);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, token, input.rememberMe ? { ...cookieOptions, maxAge: LOCAL_SESSION_TTL_MS } : cookieOptions);
+      await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role, rememberMe: input.rememberMe } });
       return { success: true, user: { id: result.user.id, name: result.user.name, role: result.user.role } };
     }),
     issueLocalSetupCode: protectedProcedure.input(z4.object({ userId: z4.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -3115,6 +3138,26 @@ var appRouter = router({
         throw new TRPCError6({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete account setup." });
       }
     }),
+    resetLocalPassword: publicProcedure.input(z4.object({ userId: z4.number().int().positive(), setupCode: z4.string().trim().min(8).max(32), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+      if (input.password !== input.confirmPassword) throw new TRPCError6({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      try {
+        await resetLocalPassword({ userId: input.userId, setupCode: input.setupCode, password: input.password });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Recovery code invalid or expired.";
+        if (message === "Database service is unavailable.") throw new TRPCError6({ code: "INTERNAL_SERVER_ERROR", message });
+        const locked = message.startsWith("Too many failed attempts.");
+        try {
+          await writeAuditLog({ action: "auth.local_password_reset_failed", entityType: "user", entityId: input.userId, metadata: { reason: locked ? "locked" : "recovery_code_invalid_or_expired" } });
+        } catch {
+        }
+        throw new TRPCError6({ code: locked ? "TOO_MANY_REQUESTS" : "BAD_REQUEST", message: locked ? message : "Recovery code invalid or expired." });
+      }
+      try {
+        await writeAuditLog({ action: "auth.local_password_reset_completed", entityType: "user", entityId: input.userId, metadata: { recoveryCodeConsumed: true, sessionsRevoked: true } });
+      } catch {
+      }
+      return { success: true };
+    }),
     completeSuperAdminSetup: publicProcedure.input(z4.object({ setupCode: z4.string().trim().min(8).max(32), username: z4.string().trim().min(3).max(80), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
       if (input.password !== input.confirmPassword) throw new TRPCError6({ code: "BAD_REQUEST", message: "Passwords do not match." });
       try {
@@ -3125,7 +3168,7 @@ var appRouter = router({
         throw new TRPCError6({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete Super Administrator setup." });
       }
     }),
-    loginStudent: publicProcedure.input(z4.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
+    loginStudent: publicProcedure.input(z4.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema, rememberMe: z4.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
       if (student?.disabledAt) {
         await writeAuditLog({ schoolId: school.id, action: "student.login_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "account_disabled" } });
@@ -3158,9 +3201,10 @@ var appRouter = router({
       const signedInAt = /* @__PURE__ */ new Date();
       await db.update(studentCredentials).set({ failedAttempts: 0, lockedUntil: null, lastLoginAt: signedInAt }).where(eq5(studentCredentials.studentId, student.id));
       await db.update(users).set({ lastSignedIn: signedInAt, name: `${student.firstName} ${student.lastName}`, role: "student", loginMethod: "student_password" }).where(eq5(users.id, user.id));
-      const sessionToken = await createLocalSession(user.id);
-      ctx.res.cookie(LOCAL_SESSION_COOKIE, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1e3 });
-      await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
+      const sessionToken = await createLocalSession(user.id, input.rememberMe);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, sessionToken, input.rememberMe ? { ...cookieOptions, maxAge: LOCAL_SESSION_TTL_MS } : cookieOptions);
+      await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword, rememberMe: input.rememberMe } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } };
     }),
     issueStudentPasswordResetCode: protectedProcedure.input(z4.object({ studentId: studentIdSchema, sendNotice: z4.boolean().default(false) })).mutation(async ({ ctx, input }) => {
