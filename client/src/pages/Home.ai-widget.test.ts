@@ -9,6 +9,11 @@ describe("AI landing widget reliability", () => {
     expect(source).toContain("Ask AI");
   });
 
+  it("does not render over the public login form before sign-in", async () => {
+    const source = await readFile(new URL("./Home.tsx", import.meta.url), "utf8");
+    expect(source).toContain("{user ? <AIAssistantWidget /> : null}");
+  });
+
   it("keeps failed replies visible instead of adding a blank assistant message", async () => {
     const source = await readFile(new URL("../../../server/routers.ts", import.meta.url), "utf8");
     expect(source).toContain("The assistant could not produce an answer. Please try again.");

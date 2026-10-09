@@ -7,6 +7,7 @@ import { hashStudentSecret, verifyStudentSecret, STUDENT_LOGIN_LOCK_MS, STUDENT_
 
 export const LOCAL_SESSION_COOKIE = "elimubora_local_session";
 export const LOCAL_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+export const LOCAL_SESSION_SHORT_TTL_MS = 1000 * 60 * 60 * 12;
 export const LOCAL_SETUP_TTL_MS = 1000 * 60 * 60 * 24;
 
 export function normalizeLocalUsername(value: string) {
@@ -28,12 +29,13 @@ export function readLocalSessionToken(req: Request) {
   return pair ? decodeURIComponent(pair.slice(LOCAL_SESSION_COOKIE.length + 1)) : undefined;
 }
 
-export async function createLocalSession(userId: number) {
+export async function createLocalSession(userId: number, rememberMe = false) {
   const db = await getDb();
   if (!db) throw new Error("Database service is unavailable.");
   const token = randomBytes(32).toString("base64url");
   const now = new Date();
-  await db.insert(localAuthSessions).values({ userId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + LOCAL_SESSION_TTL_MS), lastSeenAt: now });
+  const ttl = rememberMe ? LOCAL_SESSION_TTL_MS : LOCAL_SESSION_SHORT_TTL_MS;
+  await db.insert(localAuthSessions).values({ userId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + ttl), lastSeenAt: now });
   return token;
 }
 
@@ -54,6 +56,27 @@ export async function authenticateLocalRequest(req: Request): Promise<User | nul
   if (!row || row.user.disabledAt) return null;
   await db.update(localAuthSessions).set({ lastSeenAt: new Date() }).where(eq(localAuthSessions.id, row.session.id));
   return row.user;
+}
+
+export async function resetLocalPassword(input: { userId: number; setupCode: string; password: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database service is unavailable.");
+  const [credential] = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.userId, input.userId)).limit(1);
+  const now = new Date();
+  if (!credential?.setupCodeHash || !credential.setupCodeExpiresAt || credential.setupCodeExpiresAt.getTime() <= now.getTime()) throw new Error("Recovery code invalid or expired.");
+  if (credential.lockedUntil && credential.lockedUntil.getTime() > now.getTime()) throw new Error("Too many failed attempts. Try again in 15 minutes.");
+  const validCode = await verifyStudentSecret(input.setupCode.trim().toUpperCase(), credential.setupCodeHash);
+  if (!validCode) {
+    const failedAttempts = Number(credential.failedAttempts ?? 0) + 1;
+    const lockedUntil = failedAttempts >= STUDENT_LOGIN_MAX_ATTEMPTS ? new Date(now.getTime() + STUDENT_LOGIN_LOCK_MS) : null;
+    await db.update(localAuthCredentials).set({ failedAttempts, lockedUntil, updatedAt: now }).where(eq(localAuthCredentials.userId, input.userId));
+    throw new Error(lockedUntil ? "Too many failed attempts. Try again in 15 minutes." : "Recovery code invalid or expired.");
+  }
+  const passwordHash = await hashStudentSecret(input.password);
+  const [updated] = await db.update(localAuthCredentials).set({ passwordHash, setupCodeHash: null, setupCodeExpiresAt: null, failedAttempts: 0, lockedUntil: null, updatedAt: now }).where(and(eq(localAuthCredentials.userId, input.userId), eq(localAuthCredentials.setupCodeHash, credential.setupCodeHash), gt(localAuthCredentials.setupCodeExpiresAt, now))).returning({ id: localAuthCredentials.id });
+  if (!updated) throw new Error("Recovery code invalid or expired.");
+  await db.delete(localAuthSessions).where(eq(localAuthSessions.userId, input.userId));
+  return { success: true } as const;
 }
 
 export async function issueLocalSetupCode(userId: number) {

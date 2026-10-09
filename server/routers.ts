@@ -12,7 +12,7 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { schoolRouter } from "./routers/school";
 import { requireRole } from "./permissions";
 import { invokeLLM } from "./_core/llm";
-import { clearLocalSession, completeLocalSetup, completeSuperAdminSetup, createLocalSession, issueLocalSetupCode, loginLocalUser, LOCAL_SESSION_COOKIE, readLocalSessionToken } from "./local-auth";
+import { clearLocalSession, completeLocalSetup, completeSuperAdminSetup, createLocalSession, issueLocalSetupCode, loginLocalUser, LOCAL_SESSION_COOKIE, LOCAL_SESSION_TTL_MS, readLocalSessionToken, resetLocalPassword } from "./local-auth";
 
 const studentLoginPasswordSchema = z.string().trim().min(1, "Enter your admission number as the password.").max(128);
 const studentUsernameSchema = z.string().trim().min(2, "Enter your full name.").max(160, "Name is too long.");
@@ -149,15 +149,16 @@ export const appRouter = router({
   }),
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
-    loginLocal: publicProcedure.input(z.object({ identifier: z.string().trim().min(2).max(160), password: z.string().min(1).max(128) })).mutation(async ({ ctx, input }) => {
+    loginLocal: publicProcedure.input(z.object({ identifier: z.string().trim().min(2).max(160), password: z.string().min(1).max(128), rememberMe: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       const result = await loginLocalUser(input.identifier, input.password);
       if (!result.ok) {
         try { await writeAuditLog({ action: "auth.local_login_failed", entityType: "auth_attempt", metadata: { reason: result.reason } }); } catch { /* Login failure reporting must not expose database errors to unauthenticated callers. */ }
         throw new TRPCError({ code: result.reason === "locked" ? "TOO_MANY_REQUESTS" : "UNAUTHORIZED", message: result.reason === "locked" ? "Too many failed attempts. Try again in 15 minutes." : "Invalid username or password." });
       }
-      const token = await createLocalSession(result.user.id);
-      ctx.res.cookie(LOCAL_SESSION_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
-      await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role } });
+      const token = await createLocalSession(result.user.id, input.rememberMe);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, token, input.rememberMe ? { ...cookieOptions, maxAge: LOCAL_SESSION_TTL_MS } : cookieOptions);
+      await writeAuditLog({ schoolId: result.user.schoolId, actorUserId: result.user.id, action: "auth.local_login_succeeded", entityType: "user", entityId: result.user.id, metadata: { role: result.user.role, rememberMe: input.rememberMe } });
       return { success: true, user: { id: result.user.id, name: result.user.name, role: result.user.role } } as const;
     }),
     issueLocalSetupCode: protectedProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -180,6 +181,20 @@ export const appRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete account setup." });
       }
     }),
+    resetLocalPassword: publicProcedure.input(z.object({ userId: z.number().int().positive(), setupCode: z.string().trim().min(8).max(32), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
+      if (input.password !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
+      try {
+        await resetLocalPassword({ userId: input.userId, setupCode: input.setupCode, password: input.password });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Recovery code invalid or expired.";
+        if (message === "Database service is unavailable.") throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
+        const locked = message.startsWith("Too many failed attempts.");
+        try { await writeAuditLog({ action: "auth.local_password_reset_failed", entityType: "user", entityId: input.userId, metadata: { reason: locked ? "locked" : "recovery_code_invalid_or_expired" } }); } catch { /* Do not expose audit/database errors to unauthenticated callers. */ }
+        throw new TRPCError({ code: locked ? "TOO_MANY_REQUESTS" : "BAD_REQUEST", message: locked ? message : "Recovery code invalid or expired." });
+      }
+      try { await writeAuditLog({ action: "auth.local_password_reset_completed", entityType: "user", entityId: input.userId, metadata: { recoveryCodeConsumed: true, sessionsRevoked: true } }); } catch { /* The credential and active sessions are already safely updated. */ }
+      return { success: true } as const;
+    }),
     completeSuperAdminSetup: publicProcedure.input(z.object({ setupCode: z.string().trim().min(8).max(32), username: z.string().trim().min(3).max(80), password: studentNewPasswordSchema, confirmPassword: studentNewPasswordSchema })).mutation(async ({ input }) => {
       if (input.password !== input.confirmPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Passwords do not match." });
       try {
@@ -190,7 +205,7 @@ export const appRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to complete Super Administrator setup." });
       }
     }),
-    loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema })).mutation(async ({ ctx, input }) => {
+    loginStudent: publicProcedure.input(z.object({ schoolCode: schoolCodeSchema, username: studentUsernameSchema, password: studentLoginPasswordSchema, rememberMe: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
       const { db, school, student, username } = await getStudentLoginRecord(input.schoolCode, input.username);
       if (student?.disabledAt) {
         await writeAuditLog({ schoolId: school.id, action: "student.login_failed", entityType: "student", entityId: student.id, metadata: { username, reason: "account_disabled" } });
@@ -223,9 +238,10 @@ export const appRouter = router({
       const signedInAt = new Date();
       await db.update(studentCredentials).set({ failedAttempts: 0, lockedUntil: null, lastLoginAt: signedInAt }).where(eq(studentCredentials.studentId, student.id));
       await db.update(users).set({ lastSignedIn: signedInAt, name: `${student.firstName} ${student.lastName}`, role: "student", loginMethod: "student_password" }).where(eq(users.id, user.id));
-      const sessionToken = await createLocalSession(user.id);
-      ctx.res.cookie(LOCAL_SESSION_COOKIE, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
-      await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword } });
+      const sessionToken = await createLocalSession(user.id, input.rememberMe);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(LOCAL_SESSION_COOKIE, sessionToken, input.rememberMe ? { ...cookieOptions, maxAge: LOCAL_SESSION_TTL_MS } : cookieOptions);
+      await writeAuditLog({ schoolId: school.id, actorUserId: user.id, action: "student.login_succeeded", entityType: "student", entityId: student.id, metadata: { username, admissionNo: student.admissionNo, passwordMode: "admission_number", migratedLegacyPassword, rememberMe: input.rememberMe } });
       return { success: true, student: { id: student.id, admissionNo: student.admissionNo, name: `${student.firstName} ${student.lastName}` } } as const;
     }),
     issueStudentPasswordResetCode: protectedProcedure.input(z.object({ studentId: studentIdSchema, sendNotice: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {

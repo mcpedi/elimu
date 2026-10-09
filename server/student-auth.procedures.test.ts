@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
-import { LOCAL_SESSION_COOKIE } from "./local-auth";
+import { createLocalSession, LOCAL_SESSION_COOKIE, LOCAL_SESSION_TTL_MS, loginLocalUser } from "./local-auth";
 import { academicYears, assessments, marks, reportCards, reportExports, schoolClasses, schools, studentCredentials, students, subjects, teacherAssignments, teachers, terms, users } from "../drizzle/schema";
 
 const dbState = vi.hoisted(() => ({ current: null as any }));
@@ -18,7 +18,7 @@ vi.mock("./_core/sdk", () => ({
 
 vi.mock("./local-auth", async importOriginal => {
   const actual = await importOriginal<typeof import("./local-auth")>();
-  return { ...actual, createLocalSession: vi.fn(async () => "student-local-session") };
+  return { ...actual, createLocalSession: vi.fn(async () => "student-local-session"), loginLocalUser: vi.fn(async () => ({ ok: true as const, user: { id: 701, name: "Test Teacher", role: "teacher", schoolId: 1 } })) };
 });
 
 import { writeAuditLog } from "./db";
@@ -71,8 +71,22 @@ function context(role: "parent" | "student" | "teacher" | "principal" | "super_a
 const school = { id: 1, name: "Test School", code: "TST" };
 const student = { id: 11, schoolId: 1, userId: null, admissionNo: "ADM-0042", firstName: "Amina", middleName: null, lastName: "Otieno", gender: "female", dateOfBirth: null, phone: null, email: "amina@example.com", currentClassId: null, status: "active", enrolledOn: "2026-01-01", createdAt: new Date(), updatedAt: new Date() };
 
+describe("staff authentication Remember Me", () => {
+  it("creates a 30-day local session when the staff member opts in", async () => {
+    vi.mocked(createLocalSession).mockClear();
+    vi.mocked(loginLocalUser).mockClear();
+    const res = response();
+    const result = await appRouter.createCaller(context("parent", res)).auth.loginLocal({ identifier: "teacher", password: "password", rememberMe: true });
+    expect(result.success).toBe(true);
+    expect(loginLocalUser).toHaveBeenCalledWith("teacher", "password");
+    expect(createLocalSession).toHaveBeenCalledWith(701, true);
+    expect(res.cookie).toHaveBeenCalledWith(LOCAL_SESSION_COOKIE, "student-local-session", expect.objectContaining({ maxAge: LOCAL_SESSION_TTL_MS }));
+  });
+});
+
 describe("student authentication procedures", () => {
   it("uses the learner name as username and hashes the admission number as the initial password", async () => {
+    vi.mocked(createLocalSession).mockClear();
     const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, []], [users, []]]);
     dbState.current = fakeDb(tables);
     vi.mocked(writeAuditLog).mockClear();
@@ -83,8 +97,21 @@ describe("student authentication procedures", () => {
     expect(tables.get(studentCredentials)?.[0].passwordHash).not.toContain("ADM-0042");
     expect(tables.get(users)?.[0].role).toBe("student");
     expect(tables.get(users)?.[0].schoolId).toBe(1);
-    expect(res.cookie).toHaveBeenCalledWith(LOCAL_SESSION_COOKIE, "student-local-session", expect.objectContaining({ httpOnly: true, secure: true, maxAge: expect.any(Number) }));
+    expect(res.cookie).toHaveBeenCalledWith(LOCAL_SESSION_COOKIE, "student-local-session", expect.objectContaining({ httpOnly: true, secure: true }));
+    expect((vi.mocked(res.cookie).mock.calls[0][2] as { maxAge?: number }).maxAge).toBeUndefined();
+    expect(createLocalSession).toHaveBeenCalledWith(tables.get(users)?.[0].id, false);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "student.login_succeeded", actorUserId: tables.get(users)?.[0].id, metadata: expect.objectContaining({ passwordMode: "admission_number" }) }));
+  });
+
+  it("issues a 30-day persistent cookie only when a learner selects Remember Me", async () => {
+    vi.mocked(createLocalSession).mockClear();
+    const tables = new Map<unknown, any[]>([[schools, [school]], [students, [{ ...student }]], [studentCredentials, []], [users, []]]);
+    dbState.current = fakeDb(tables);
+    const res = response();
+    const result = await appRouter.createCaller(context("parent", res)).auth.loginStudent({ schoolCode: "TST", username: "Amina Otieno", password: "ADM-0042", rememberMe: true });
+    expect(result.success).toBe(true);
+    expect(createLocalSession).toHaveBeenCalledWith(tables.get(users)?.[0].id, true);
+    expect(res.cookie).toHaveBeenCalledWith(LOCAL_SESSION_COOKIE, "student-local-session", expect.objectContaining({ httpOnly: true, secure: true, maxAge: LOCAL_SESSION_TTL_MS }));
   });
 
   it("rejects a learner login before any record lookup when the supplied school code is not their school", async () => {
