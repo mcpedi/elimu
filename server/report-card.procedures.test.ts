@@ -59,7 +59,7 @@ function context(role: "student" | "teacher" | "class_teacher" | "principal" | "
 }
 
 const school = { id: 1, name: "Test School", code: "TST", phone: "+254700000000", email: "office@test.school", address: "Nairobi", logoKey: "schools/test-logo.png", gradeScale: null };
-const learner = { id: 11, schoolId: 1, userId: 101, admissionNo: "ADM-0042", firstName: "Amina", middleName: null, lastName: "Otieno", currentClassId: 41, status: "active" };
+const learner = { id: 11, schoolId: 1, userId: 101, admissionNo: "ADM-0042", firstName: "Amina", middleName: null, lastName: "Otieno", currentClassId: 41, classId: 41, form: "Form 2", stream: "East", status: "active" };
 const schoolClass = { id: 41, schoolId: 1, form: "Form 2", stream: "East", classTeacherId: null };
 const academicYear = { id: 21, schoolId: 1, name: "2026" };
 const term = { id: 31, academicYearId: 21, name: "Term 1" };
@@ -145,6 +145,42 @@ describe("report-card procedures", () => {
 
     await expect(appRouter.createCaller(context("principal", 201)).school.reportCards.saveEditableSheet({ studentId: 11, academicYearId: 21, termId: 31, classId: 41, rows: [{ subjectId: 51, score: 82, maxMarks: 100 }] })).rejects.toThrow("exactly one mark for every subject");
     expect(tables.get(reportCards)).toHaveLength(0);
+  });
+
+  it("returns a learner-ordered class/form register with the saved learner-balanced mean", async () => {
+    const tables = tablesWithMarks();
+    tables.set(students, [learner, { id: 12, schoolId: 1, userId: 102, admissionNo: "ADM-0043", firstName: "Brian", middleName: null, lastName: "Achieng", currentClassId: 41, classId: 41, form: "Form 2", stream: "East", status: "active" }]);
+    tables.set(studentSubjects, [{ id: 51, studentId: 11, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT", subject: "Mathematics", subjectCode: "MAT" }, { id: 52, studentId: 12, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT", subject: "Mathematics", subjectCode: "MAT" }]);
+    tables.set(reportCards, [{ id: 100, schoolId: 1, studentId: 11, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 82, maxMarks: 100, grade: "A", gradePoints: 12, comment: null }] }, { id: 101, schoolId: 1, studentId: 12, academicYearId: 21, termId: 31, classId: 41, resultSnapshot: [{ subjectId: 51, subject: "Mathematics", subjectCode: "MAT", score: 90, maxMarks: 100, grade: "A", gradePoints: 12, comment: null }] }]);
+    dbState.current = fakeDb(tables);
+    const caller = appRouter.createCaller(context("principal", 201));
+
+    const classResult = await caller.school.reportCards.classSheet({ classId: 41, academicYearId: 21, termId: 31 });
+    expect(classResult).toMatchObject({ scope: "class", form: "Form 2", scopeMean: 86, studentsWithMarks: 2, totalMarkEntries: 2 });
+    expect(classResult.students.map(row => row.lastName)).toEqual(["Achieng", "Otieno"]);
+    expect(classResult.students[1]).toMatchObject({ firstName: "Amina", lastName: "Otieno", admissionNo: "ADM-0042", meanPercentage: 82, meanGrade: "A" });
+    expect(classResult.students[1].subjects[0]).toMatchObject({ subject: "Mathematics", subjectCode: "MAT", score: 82 });
+
+    const formResult = await caller.school.reportCards.classSheet({ form: "Form 2", academicYearId: 21, termId: 31 });
+    expect(formResult).toMatchObject({ scope: "form", form: "Form 2", scopeMean: 86, classSummaries: [{ form: "Form 2", stream: "East", averagePercentage: 86 }] });
+    await expect(appRouter.createCaller(context("class_teacher", 402)).school.reportCards.classSheet({ form: "Form 2", academicYearId: 21, termId: 31 })).rejects.toThrow("Only school leadership");
+  });
+
+  it("saves all active class learner marks in one request and syncs the class mean and gradebook", async () => {
+    const tables = tablesWithMarks();
+    tables.set(marks, []);
+    tables.set(assessments, []);
+    tables.set(studentSubjects, [{ id: 51, studentId: 11, subjectId: 51, schoolId: 1, name: "Mathematics", code: "MAT", subject: "Mathematics", subjectCode: "MAT" }]);
+    tables.set(teachers, [{ id: 91, schoolId: 1, userId: 501, employmentStatus: "active" }]);
+    tables.set(teacherAssignments, [{ id: 81, schoolId: 1, teacherId: 91, classId: 41, subjectId: 51, academicYearId: 21, termId: 31, subject: "Mathematics", subjectCode: "MAT" }]);
+    dbState.current = fakeDb(tables);
+
+    const result = await appRouter.createCaller(context("principal", 201)).school.reportCards.saveClassSheet({ academicYearId: 21, termId: 31, classId: 41, students: [{ studentId: 11, rows: [{ subjectId: 51, score: 89, maxMarks: 100 }] }] });
+
+    expect(result).toMatchObject({ success: true, learnerCount: 1, subjectCount: 1, gradebookSyncedMarkCount: 1, classMean: 89, meanGrade: "A" });
+    expect(tables.get(reportCards)?.[0]).toMatchObject({ studentId: 11, classId: 41, averagePercentage: "89", publishedAt: null });
+    expect(tables.get(assessments)?.[0]).toMatchObject({ title: "Term Report - MAT", maxMarks: "100", classId: 41 });
+    expect(tables.get(marks)?.[0]).toMatchObject({ studentId: 11, subjectId: 51, score: "89", teacherId: 91 });
   });
 
   it("keeps draft report cards hidden from learners until the batch is published", async () => {
