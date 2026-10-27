@@ -125,6 +125,20 @@ var schools = pgTable("schools", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 });
+var schoolSubscriptions = pgTable("schoolSubscriptions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("schoolId").notNull().references(() => schools.id),
+  plan: text("plan").$type().notNull().default("Free"),
+  status: text("status").$type().notNull().default("active"),
+  billingPeriod: text("billingPeriod").$type().notNull().default("none"),
+  updatedByUserId: integer("updatedByUserId").references(() => users.id),
+  changeNote: text("changeNote"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
+}, (table) => [
+  uniqueIndex("school_subscription_school_unique").on(table.schoolId),
+  index("school_subscription_plan_status_index").on(table.plan, table.status)
+]);
 var academicYears = pgTable("academicYears", {
   id: serial("id").primaryKey(),
   schoolId: integer("schoolId").notNull().references(() => schools.id),
@@ -1503,6 +1517,69 @@ var schoolRouter = router({
     })
   }),
   platform: router({
+    subscriptions: protectedProcedure.query(async ({ ctx }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError5({ code: "FORBIDDEN", message: "Subscription management is restricted to designated platform administrators." });
+      const rows = await db.select({
+        schoolId: schools.id,
+        schoolName: schools.name,
+        schoolCode: schools.code,
+        schoolEmail: schools.email,
+        plan: schoolSubscriptions.plan,
+        status: schoolSubscriptions.status,
+        billingPeriod: schoolSubscriptions.billingPeriod,
+        changeNote: schoolSubscriptions.changeNote,
+        updatedAt: schoolSubscriptions.updatedAt,
+        updatedByName: users.name
+      }).from(schools).leftJoin(schoolSubscriptions, eq3(schoolSubscriptions.schoolId, schools.id)).leftJoin(users, eq3(users.id, schoolSubscriptions.updatedByUserId)).orderBy(asc2(schools.name));
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.subscription_directory_viewed", entityType: "platform", metadata: { schoolCount: rows.length } });
+      return rows.map((row) => ({
+        ...row,
+        plan: row.plan ?? "Free",
+        status: row.status ?? "active",
+        billingPeriod: row.billingPeriod ?? "none",
+        isDefaultPlan: row.plan === null
+      }));
+    }),
+    setSubscriptionPlan: protectedProcedure.input(z3.object({
+      schoolId: z3.number().int().positive(),
+      plan: z3.enum(["Free", "Pro", "Enterprise"]),
+      billingPeriod: z3.enum(["none", "monthly", "annual"]),
+      changeNote: z3.string().trim().min(3).max(280)
+    }).refine((value) => value.plan === "Free" ? value.billingPeriod === "none" : value.billingPeriod !== "none", {
+      message: "Choose monthly or annual billing for paid plans, and no billing period for Free.",
+      path: ["billingPeriod"]
+    })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError5({ code: "FORBIDDEN", message: "Subscription changes are restricted to designated platform administrators." });
+      const [school] = await db.select({ id: schools.id, name: schools.name }).from(schools).where(eq3(schools.id, input.schoolId)).limit(1);
+      if (!school) throw new TRPCError5({ code: "NOT_FOUND", message: "School account not found." });
+      const [previous] = await db.select({ plan: schoolSubscriptions.plan, billingPeriod: schoolSubscriptions.billingPeriod }).from(schoolSubscriptions).where(eq3(schoolSubscriptions.schoolId, school.id)).limit(1);
+      const now = /* @__PURE__ */ new Date();
+      await db.insert(schoolSubscriptions).values({
+        schoolId: school.id,
+        plan: input.plan,
+        status: "active",
+        billingPeriod: input.billingPeriod,
+        updatedByUserId: ctx.user.id,
+        changeNote: input.changeNote,
+        updatedAt: now
+      }).onConflictDoUpdate({
+        target: schoolSubscriptions.schoolId,
+        set: { plan: input.plan, status: "active", billingPeriod: input.billingPeriod, updatedByUserId: ctx.user.id, changeNote: input.changeNote, updatedAt: now }
+      });
+      await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.subscription_plan_changed", entityType: "schoolSubscription", entityId: school.id, schoolId: school.id, metadata: {
+        schoolName: school.name,
+        previousPlan: previous?.plan ?? "Free",
+        previousBillingPeriod: previous?.billingPeriod ?? "none",
+        plan: input.plan,
+        billingPeriod: input.billingPeriod,
+        changeNote: input.changeNote,
+        paymentCollected: false,
+        changeType: "manual_admin_change"
+      } });
+      return { success: true, schoolId: school.id, plan: input.plan, billingPeriod: input.billingPeriod, effectiveAt: now };
+    }),
     access: protectedProcedure.query(async ({ ctx }) => {
       const { allowed } = await platformMonitorAccess(ctx.user);
       return { allowed };

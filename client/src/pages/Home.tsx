@@ -21,12 +21,14 @@ import PlatformAuditPanel from "./PlatformAuditPanel";
 import StudentPasswordCard from "@/components/StudentPasswordCard";
 import LocalAccountProvisioning from "@/components/LocalAccountProvisioning";
 import StudentReportCards from "@/components/StudentReportCards";
+import SubscriptionPlans from "./SubscriptionPlans";
+import SubscriptionManagement from "./SubscriptionManagement";
 import { AssignmentsPanel, CalendarAndNoticesPanel, MessagingAndBrandingPanel, SchoolToolsPanel, StudentIdAndBulkPanel } from "./MvpEnhancements";
 import { cn } from "@/lib/utils";
 import { BRAND_LOGO_URL } from "@/const";
 import { format } from "date-fns";
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, Building2, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, FileBarChart, FileText, GraduationCap, History, LayoutDashboard, ListChecks, Loader2, Megaphone, MessageCircle, MoreHorizontal, Pencil, Plus, ReceiptText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, SquareArrowOutUpRight, TableProperties, UserCheck, UserRoundCog, UserRoundX, Users, WalletCards, X,
+  Activity, ArrowDownRight, ArrowUpRight, Banknote, Bell, BookOpenCheck, Building2, CalendarDays, CheckCircle2, ChevronRight, ClipboardCheck, Clock3, CreditCard, FileBarChart, FileText, GraduationCap, History, LayoutDashboard, ListChecks, Loader2, Megaphone, MessageCircle, MoreHorizontal, Pencil, Plus, ReceiptText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, SquareArrowOutUpRight, TableProperties, UserCheck, UserRoundCog, UserRoundX, Users, WalletCards, X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -79,7 +81,8 @@ export function roleNavigation(role?: string, isPlatformAdmin = false): Navigati
       item("operations", "Daily tasks", ListChecks, "Operations"),
       item("advanced", "Search & alerts", Settings2, "Operations"),
       item("reports", "Reports", FileBarChart, "Insights"),
-      ...(role === "super_admin" && isPlatformAdmin ? [item("platform", "Platform monitor", Building2, "Administration")] : []),
+      ...(["super_admin", "principal"].includes(role ?? "") ? [item("subscription", "Plans & billing", CreditCard, "Administration")] : []),
+      ...(role === "super_admin" && isPlatformAdmin ? [item("platform", "Platform monitor", Building2, "Administration"), item("subscription-admin", "Subscriptions", CreditCard, "Administration")] : []),
       item("audit", "Audit log", ShieldCheck, "Administration"),
       ...(role === "super_admin" ? [item("settings", "Settings", Settings2, "Administration")] : []),
       assistant,
@@ -800,7 +803,7 @@ export default function Home() {
   const nav = useMemo(() => roleNavigation(user?.role, Boolean(platformAccess.data?.allowed)), [user?.role, platformAccess.data?.allowed]);
   const [active, setActive] = useState("dashboard");
   const safeActive = nav.some(item => item.id === active) ? active : "dashboard";
-  const titles: Record<string, string> = { dashboard: "School overview", assistant: "AI assistant", platform: "Platform monitor", students: "Learner records", teachers: "Teaching team", academics: "Academics", homework: "Assignments & homework", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", calendar: "Calendar & notices", announcements: "Announcements", messages: "Messages & branding", operations: "Daily tasks", advanced: "Search & alerts", reports: "Reports", audit: "Audit log", settings: "Settings & access" };
-  const content = { dashboard: <Overview />, assistant: <AssistantPanel />, platform: <PlatformMonitor />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , homework: <AssignmentsPanel />, attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, calendar: <CalendarAndNoticesPanel />, messages: <MessagingAndBrandingPanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <SchoolToolsPanel />, reports: <ReportsPanel />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
+  const titles: Record<string, string> = { dashboard: "School overview", assistant: "AI assistant", platform: "Platform monitor", students: "Learner records", teachers: "Teaching team", academics: "Academics", homework: "Assignments & homework", attendance: "Attendance", fees: "Fee management", timetable: "Timetable", calendar: "Calendar & notices", announcements: "Announcements", messages: "Messages & branding", operations: "Daily tasks", advanced: "Search & alerts", reports: "Reports", subscription: "Plans & billing", "subscription-admin": "Subscription management", audit: "Audit log", settings: "Settings & access" };
+  const content = { dashboard: <Overview />, assistant: <AssistantPanel />, platform: <PlatformMonitor />, students: <StudentsPanel />, teachers: <TeachersPanel />, academics: <AcademicsPanel /> , homework: <AssignmentsPanel />, attendance: <AttendancePanel />, fees: <FeesPanel />, timetable: <TimetablePanel />, calendar: <CalendarAndNoticesPanel />, messages: <MessagingAndBrandingPanel />, announcements: <AnnouncementsPanel />, operations: <OperationsPanel />, advanced: <SchoolToolsPanel />, reports: <ReportsPanel />, subscription: <SubscriptionPlans />, "subscription-admin": <SubscriptionManagement />, audit: <AuditPanel />, settings: <SettingsPanel /> }[safeActive] ?? <Overview />;
   return <><DashboardLayout navigation={nav} activeId={safeActive} onNavigate={setActive} title={titles[safeActive] ?? "School workspace"} subtitle="Secure, role-specific school operations">{content}</DashboardLayout>{user ? <AIAssistantWidget /> : null}</>;
 }

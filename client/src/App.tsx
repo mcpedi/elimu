@@ -7,12 +7,14 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import CardVerification from "./pages/CardVerification";
 import SuperAdminSetup from "./pages/SuperAdminSetup";
+import SubscriptionPlans from "./pages/SubscriptionPlans";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path={"/verify-card"} component={CardVerification} />
+      <Route path={"/subscription-preview"} component={SubscriptionPlans} />
       <Route path={"/setup/super-admin"} component={SuperAdminSetup} />
       <Route path={"/"} component={Home} />
       <Route path={"/login"} component={Home} />

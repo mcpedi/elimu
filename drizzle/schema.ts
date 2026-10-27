@@ -74,6 +74,24 @@ export const schools = pgTable("schools", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
+export const schoolSubscriptions = pgTable("schoolSubscriptions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("schoolId").notNull().references(() => schools.id),
+  plan: text("plan").$type<"Free" | "Pro" | "Enterprise">().notNull().default("Free"),
+  status: text("status").$type<"active">().notNull().default("active"),
+  billingPeriod: text("billingPeriod").$type<"none" | "monthly" | "annual">().notNull().default("none"),
+  updatedByUserId: integer("updatedByUserId").references(() => users.id),
+  changeNote: text("changeNote"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("school_subscription_school_unique").on(table.schoolId),
+  index("school_subscription_plan_status_index").on(table.plan, table.status),
+]);
+
+export type SchoolSubscription = typeof schoolSubscriptions.$inferSelect;
+export type InsertSchoolSubscription = typeof schoolSubscriptions.$inferInsert;
+
 export const academicYears = pgTable("academicYears", {
   id: serial("id").primaryKey(),
   schoolId: integer("schoolId").notNull().references(() => schools.id),
