@@ -21,6 +21,7 @@ import {
   reportExports,
   receipts,
   schoolClasses,
+  subscriptionPayments,
   schoolSubscriptions,
   schools,
   studentDocuments,
@@ -47,6 +48,9 @@ import { hasTimetableConflict } from "../timetable";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getTenantContext } from "../_core/tenant";
 import { ENV } from "../_core/env";
+import { createDarajaAdapter, DarajaRequestError, getDarajaConfig, isDarajaCheckoutEnabled, normalizeKenyanPhoneNumber } from "../finance/mpesa";
+import { addBillingPeriod, processPendingDarajaCallback } from "../finance/mpesa-callback";
+import { getSubscriptionPrice, type PaidBillingPeriod, type PaidSubscriptionPlan } from "../../shared/subscription-pricing";
 import { mvpRouter } from "./mvp";
 
 const schoolRoleSchema = z.enum([
@@ -186,6 +190,195 @@ async function announcementFeedForUser(userId: number, role: string) {
 
 export const schoolRouter = router({
   mvp: mvpRouter,
+  subscriptionBilling: router({
+    configuration: protectedProcedure.query(async ({ ctx }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [subscription] = await db.select().from(schoolSubscriptions).where(eq(schoolSubscriptions.schoolId, school.id)).limit(1);
+      const config = getDarajaConfig();
+      return {
+        checkoutEnabled: isDarajaCheckoutEnabled(config),
+        schoolPhone: school.phone ?? "",
+        subscription: subscription ? {
+          plan: subscription.plan,
+          billingPeriod: subscription.billingPeriod,
+          currentPeriodStartsAt: subscription.currentPeriodStartsAt?.toISOString() ?? null,
+          currentPeriodEndsAt: subscription.currentPeriodEndsAt?.toISOString() ?? null,
+          updatedAt: subscription.updatedAt.toISOString(),
+        } : null,
+      };
+    }),
+    startCheckout: protectedProcedure.input(z.object({
+      plan: z.enum(["Pro", "Enterprise"]),
+      billingPeriod: z.enum(["monthly", "annual"]),
+      phoneNumber: z.string().trim().min(9).max(24),
+      idempotencyKey: z.string().uuid(),
+    })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const config = getDarajaConfig();
+      if (!isDarajaCheckoutEnabled(config)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "M-Pesa checkout is not enabled for this environment yet." });
+      }
+      const { db, school } = await getOperatingSchool();
+      let phoneNumber: string;
+      try {
+        phoneNumber = normalizeKenyanPhoneNumber(input.phoneNumber);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Enter a valid Kenyan M-Pesa phone number." });
+      }
+
+      const amount = getSubscriptionPrice(input.plan, input.billingPeriod);
+      const reservation = await db.transaction(async tx => {
+        // Serialize attempts for a school across serverless instances. The partial
+        // unique index is a second guard against more than one in-flight prompt.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(584291, ${school.id})`);
+        const [existingRequest] = await tx.select().from(subscriptionPayments)
+          .where(eq(subscriptionPayments.idempotencyKey, input.idempotencyKey)).limit(1);
+        if (existingRequest) {
+          if (existingRequest.schoolId !== school.id || existingRequest.userId !== ctx.user.id) {
+            throw new TRPCError({ code: "CONFLICT", message: "That checkout request key is already in use." });
+          }
+          if (existingRequest.plan !== input.plan || existingRequest.billingPeriod !== input.billingPeriod || existingRequest.phoneNumber !== phoneNumber) {
+            throw new TRPCError({ code: "CONFLICT", message: "A checkout request key cannot be reused for different payment details." });
+          }
+          return { kind: "existing" as const, payment: existingRequest };
+        }
+
+        const [currentSubscription] = await tx.select().from(schoolSubscriptions).where(eq(schoolSubscriptions.schoolId, school.id)).limit(1);
+        const now = new Date();
+        const activePaidPeriod = currentSubscription
+          && currentSubscription.plan !== "Free"
+          && (!currentSubscription.currentPeriodEndsAt || currentSubscription.currentPeriodEndsAt > now);
+        if (activePaidPeriod && !currentSubscription.currentPeriodEndsAt) {
+          throw new TRPCError({ code: "CONFLICT", message: "This paid plan was set by an administrator and has no payment period recorded. Contact your platform administrator before starting another checkout." });
+        }
+        if (activePaidPeriod && (currentSubscription.plan !== input.plan || currentSubscription.billingPeriod !== input.billingPeriod)) {
+          throw new TRPCError({ code: "CONFLICT", message: `Your ${currentSubscription.plan} plan is active until ${currentSubscription.currentPeriodEndsAt?.toLocaleDateString("en-KE")}. To avoid losing paid time, a different plan can be purchased after that date.` });
+        }
+
+        const [unfinishedPayment] = await tx.select({ id: subscriptionPayments.id, status: subscriptionPayments.status })
+          .from(subscriptionPayments)
+          .where(and(eq(subscriptionPayments.schoolId, school.id), inArray(subscriptionPayments.status, ["initiating", "pending", "review_required"])))
+          .orderBy(desc(subscriptionPayments.createdAt)).limit(1);
+        if (unfinishedPayment) {
+          throw new TRPCError({ code: "CONFLICT", message: unfinishedPayment.status === "review_required"
+            ? "A previous M-Pesa payment needs administrator review. Do not start another payment yet."
+            : "An M-Pesa payment is already in progress. Complete or check that prompt before trying again." });
+        }
+
+        const [inserted] = await tx.insert(subscriptionPayments).values({
+          schoolId: school.id,
+          userId: ctx.user.id,
+          plan: input.plan,
+          billingPeriod: input.billingPeriod,
+          amount,
+          currency: "KES",
+          phoneNumber,
+          idempotencyKey: input.idempotencyKey,
+          expectedSubscriptionUpdatedAt: currentSubscription?.updatedAt ?? null,
+          status: "initiating",
+          updatedAt: now,
+        }).onConflictDoNothing({ target: subscriptionPayments.idempotencyKey }).returning({ id: subscriptionPayments.id });
+        if (!inserted) throw new TRPCError({ code: "CONFLICT", message: "That checkout request key is already in use." });
+        return { kind: "created" as const, paymentId: inserted.id };
+      });
+      if (reservation.kind === "existing") {
+        const existingRequest = reservation.payment;
+        return { paymentId: existingRequest.id, status: existingRequest.status, plan: existingRequest.plan, billingPeriod: existingRequest.billingPeriod, amount: existingRequest.amount, currency: existingRequest.currency };
+      }
+
+      let result: Awaited<ReturnType<ReturnType<typeof createDarajaAdapter>["initiate"]>>;
+      try {
+        const adapter = createDarajaAdapter(config);
+        result = await adapter.initiate({
+          amount,
+          phoneNumber,
+          accountReference: `SCH${school.id}`,
+          transactionDescription: "School plan",
+        });
+      } catch (error) {
+        const retrySafe = error instanceof DarajaRequestError && error.retrySafe;
+        const failureStatus = retrySafe ? "failed" : "review_required";
+        try {
+          await db.update(subscriptionPayments).set({ status: failureStatus, updatedAt: new Date() }).where(eq(subscriptionPayments.id, reservation.paymentId));
+        } catch {
+          console.error("[M-Pesa] Could not persist a failed/uncertain initiation state.");
+        }
+        const message = error instanceof Error ? error.message : "M-Pesa could not confirm the payment request. Contact support before retrying.";
+        throw new TRPCError({ code: retrySafe ? "BAD_GATEWAY" : "SERVICE_UNAVAILABLE", message });
+      }
+
+      const checkoutRequestId = result.checkoutRequestId ?? result.providerReference;
+      let finalStatus: "pending" | "succeeded" | "failed" | "review_required" = "pending";
+      try {
+        const [persisted] = await db.update(subscriptionPayments).set({
+          status: "pending",
+          checkoutRequestId,
+          merchantRequestId: result.merchantRequestId ?? null,
+          updatedAt: new Date(),
+        }).where(and(eq(subscriptionPayments.id, reservation.paymentId), eq(subscriptionPayments.status, "initiating"))).returning({ id: subscriptionPayments.id });
+        if (!persisted) {
+          const [current] = await db.select({ status: subscriptionPayments.status }).from(subscriptionPayments)
+            .where(eq(subscriptionPayments.id, reservation.paymentId)).limit(1);
+          if (current?.status === "succeeded") {
+            finalStatus = "succeeded";
+            await db.update(subscriptionPayments).set({ checkoutRequestId, merchantRequestId: result.merchantRequestId ?? null, updatedAt: new Date() })
+              .where(and(eq(subscriptionPayments.id, reservation.paymentId), eq(subscriptionPayments.status, "succeeded")));
+          } else {
+            finalStatus = "review_required";
+            await db.update(subscriptionPayments).set({
+              status: "review_required",
+              checkoutRequestId,
+              merchantRequestId: result.merchantRequestId ?? null,
+              callbackResultDescription: "Provider response arrived after this attempt changed state; administrator reconciliation is required.",
+              updatedAt: new Date(),
+            }).where(eq(subscriptionPayments.id, reservation.paymentId));
+          }
+        }
+      } catch {
+        console.error("[M-Pesa] Safaricom accepted a prompt but its references could not be persisted; callback reconciliation may be required.");
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Safaricom may have sent the payment prompt. Check the phone and do not retry; the request is being reconciled." });
+      }
+      try {
+        await processPendingDarajaCallback(checkoutRequestId);
+      } catch {
+        console.error("[M-Pesa] A stored callback could not be replayed immediately; payment-status polling can retry it.");
+      }
+      try {
+        await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "subscription.payment_prompt_sent", entityType: "subscriptionPayment", entityId: reservation.paymentId, metadata: { plan: input.plan, billingPeriod: input.billingPeriod, amount, currency: "KES" } });
+      } catch {
+        console.error("[M-Pesa] Payment prompt was sent but its audit log could not be written.");
+      }
+      if (finalStatus === "review_required") {
+        const [current] = await db.select({ status: subscriptionPayments.status }).from(subscriptionPayments)
+          .where(eq(subscriptionPayments.id, reservation.paymentId)).limit(1);
+        if (current?.status === "succeeded" || current?.status === "failed") finalStatus = current.status;
+      }
+      return { paymentId: reservation.paymentId, status: finalStatus, plan: input.plan, billingPeriod: input.billingPeriod, amount, currency: "KES" as const };
+    }),
+    paymentStatus: protectedProcedure.input(z.object({ paymentId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin", "principal"]);
+      const { db, school } = await getOperatingSchool();
+      const [initialPayment] = await db.select({ id: subscriptionPayments.id, checkoutRequestId: subscriptionPayments.checkoutRequestId })
+        .from(subscriptionPayments)
+        .where(and(eq(subscriptionPayments.id, input.paymentId), eq(subscriptionPayments.schoolId, school.id)))
+        .limit(1);
+      if (!initialPayment) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription payment not found." });
+      if (initialPayment.checkoutRequestId) {
+        try {
+          await processPendingDarajaCallback(initialPayment.checkoutRequestId);
+        } catch {
+          console.error("[M-Pesa] A pending callback could not be replayed during status polling.");
+        }
+      }
+      const [payment] = await db.select({ id: subscriptionPayments.id, plan: subscriptionPayments.plan, billingPeriod: subscriptionPayments.billingPeriod, amount: subscriptionPayments.amount, currency: subscriptionPayments.currency, status: subscriptionPayments.status, receiptNumber: subscriptionPayments.receiptNumber, createdAt: subscriptionPayments.createdAt, completedAt: subscriptionPayments.completedAt })
+        .from(subscriptionPayments)
+        .where(and(eq(subscriptionPayments.id, input.paymentId), eq(subscriptionPayments.schoolId, school.id)))
+        .limit(1);
+      if (!payment) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription payment not found." });
+      return payment;
+    }),
+  }),
   setup: router({
     status: protectedProcedure.query(async ({ ctx }) => {
       const db = await getDb();
@@ -277,6 +470,7 @@ export const schoolRouter = router({
         plan: schoolSubscriptions.plan,
         status: schoolSubscriptions.status,
         billingPeriod: schoolSubscriptions.billingPeriod,
+        currentPeriodEndsAt: schoolSubscriptions.currentPeriodEndsAt,
         changeNote: schoolSubscriptions.changeNote,
         updatedAt: schoolSubscriptions.updatedAt,
         updatedByName: users.name,
@@ -292,6 +486,164 @@ export const schoolRouter = router({
         billingPeriod: row.billingPeriod ?? "none" as const,
         isDefaultPlan: row.plan === null,
       }));
+    }),
+    paymentHistory: protectedProcedure.query(async ({ ctx }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Subscription payment history is restricted to designated platform administrators." });
+      const rows = await db.select({
+        id: subscriptionPayments.id,
+        schoolId: schools.id,
+        schoolName: schools.name,
+        plan: subscriptionPayments.plan,
+        billingPeriod: subscriptionPayments.billingPeriod,
+        amount: subscriptionPayments.amount,
+        currency: subscriptionPayments.currency,
+        status: subscriptionPayments.status,
+        checkoutRequestId: subscriptionPayments.checkoutRequestId,
+        merchantRequestId: subscriptionPayments.merchantRequestId,
+        phoneNumber: subscriptionPayments.phoneNumber,
+        receiptNumber: subscriptionPayments.receiptNumber,
+        createdAt: subscriptionPayments.createdAt,
+        completedAt: subscriptionPayments.completedAt,
+      }).from(subscriptionPayments)
+        .innerJoin(schools, eq(schools.id, subscriptionPayments.schoolId))
+        .orderBy(desc(subscriptionPayments.createdAt))
+        .limit(100);
+      return rows.map(({ phoneNumber, ...row }) => ({
+        ...row,
+        phoneLastFour: phoneNumber.slice(-4),
+        canResolve: row.status === "review_required"
+          || ((row.status === "initiating" || row.status === "pending") && Date.now() - row.createdAt.getTime() >= 15 * 60 * 1000),
+      }));
+    }),
+    resolvePayment: protectedProcedure.input(z.object({
+      paymentId: z.number().int().positive(),
+      resolution: z.enum(["confirm_paid", "mark_unpaid"]),
+      receiptNumber: z.string().trim().min(5).max(32).regex(/^[A-Za-z0-9]+$/).optional(),
+      note: z.string().trim().min(8).max(280),
+    }).superRefine((value, ctx) => {
+      if (value.resolution === "confirm_paid" && !value.receiptNumber) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Enter the verified M-Pesa receipt number.", path: ["receiptNumber"] });
+      }
+    })).mutation(async ({ ctx, input }) => {
+      const { db, allowed } = await platformMonitorAccess(ctx.user);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Payment resolution is restricted to designated platform administrators." });
+      let checkedCheckoutRequestId: string | null = null;
+      let providerQueryVerifiedUnpaid = false;
+      if (input.resolution === "mark_unpaid") {
+        const [paymentForCheck] = await db.select({ status: subscriptionPayments.status, checkoutRequestId: subscriptionPayments.checkoutRequestId })
+          .from(subscriptionPayments).where(eq(subscriptionPayments.id, input.paymentId)).limit(1);
+        if (!paymentForCheck) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription payment not found." });
+        checkedCheckoutRequestId = paymentForCheck.checkoutRequestId;
+        const config = getDarajaConfig();
+        if (checkedCheckoutRequestId && isDarajaCheckoutEnabled(config)) {
+          let verification: Awaited<ReturnType<ReturnType<typeof createDarajaAdapter>["verify"]>>;
+          try {
+            verification = await createDarajaAdapter(config).verify(checkedCheckoutRequestId);
+          } catch {
+            throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "Safaricom could not verify this payment. Do not release it; retry the status check or inspect Daraja manually." });
+          }
+          if (verification.status !== "failed") {
+            throw new TRPCError({ code: "CONFLICT", message: verification.status === "confirmed"
+              ? "Safaricom reports this payment succeeded. Use the verified-paid resolution with its receipt."
+              : "Safaricom still reports this payment as pending. Do not release the checkout yet." });
+          }
+          providerQueryVerifiedUnpaid = true;
+        }
+      }
+      const now = new Date();
+      const result = await db.transaction(async tx => {
+        const [payment] = await tx.select().from(subscriptionPayments)
+          .where(eq(subscriptionPayments.id, input.paymentId))
+          .for("update");
+        if (!payment) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription payment not found." });
+        if (payment.status !== "initiating" && payment.status !== "pending" && payment.status !== "review_required") {
+          throw new TRPCError({ code: "CONFLICT", message: "Only unresolved M-Pesa attempts can be manually resolved." });
+        }
+        const stale = payment.status === "review_required" || now.getTime() - payment.createdAt.getTime() >= 15 * 60 * 1000;
+        if (!stale) throw new TRPCError({ code: "CONFLICT", message: "Allow at least 15 minutes for the M-Pesa response before resolving an in-progress attempt." });
+
+        if (input.resolution === "mark_unpaid") {
+          if (payment.checkoutRequestId !== checkedCheckoutRequestId) {
+            throw new TRPCError({ code: "CONFLICT", message: "The provider reference changed while the status was being verified. Refresh and verify again." });
+          }
+          await tx.update(subscriptionPayments).set({
+            status: "failed",
+            callbackResultDescription: `Platform admin verified no payment: ${input.note}`,
+            completedAt: now,
+            updatedAt: now,
+          }).where(eq(subscriptionPayments.id, payment.id));
+          await tx.insert(auditLogs).values({
+            schoolId: payment.schoolId,
+            actorUserId: ctx.user.id,
+            action: "platform.subscription_payment_marked_unpaid",
+            entityType: "subscriptionPayment",
+            entityId: String(payment.id),
+            metadata: { previousStatus: payment.status, note: input.note, verifiedExternally: true, providerQueryVerified: providerQueryVerifiedUnpaid },
+          });
+          return { paymentId: payment.id, schoolId: payment.schoolId, status: "failed" as const, resolution: input.resolution };
+        }
+
+        const receiptNumber = input.receiptNumber!.toUpperCase();
+        const [receiptOwner] = await tx.select({ id: subscriptionPayments.id }).from(subscriptionPayments)
+          .where(eq(subscriptionPayments.receiptNumber, receiptNumber)).limit(1);
+        if (receiptOwner && receiptOwner.id !== payment.id) {
+          throw new TRPCError({ code: "CONFLICT", message: "That M-Pesa receipt is already associated with another payment." });
+        }
+        const [currentSubscription] = await tx.select().from(schoolSubscriptions)
+          .where(eq(schoolSubscriptions.schoolId, payment.schoolId))
+          .for("update");
+        const currentPeriodEnd = currentSubscription?.currentPeriodEndsAt;
+        const continuation = currentSubscription
+          && currentSubscription.plan === payment.plan
+          && currentSubscription.billingPeriod === payment.billingPeriod
+          && currentPeriodEnd
+          && currentPeriodEnd > now;
+        const periodStartsAt = continuation ? currentPeriodEnd : now;
+        const periodEndsAt = addBillingPeriod(periodStartsAt, payment.billingPeriod);
+        const adminNote = `Manually verified M-Pesa receipt ${receiptNumber}: ${input.note}`;
+
+        await tx.update(subscriptionPayments).set({
+          status: "succeeded",
+          receiptNumber,
+          callbackResultDescription: adminNote,
+          completedAt: now,
+          updatedAt: now,
+        }).where(eq(subscriptionPayments.id, payment.id));
+        await tx.insert(schoolSubscriptions).values({
+          schoolId: payment.schoolId,
+          plan: payment.plan,
+          status: "active",
+          billingPeriod: payment.billingPeriod,
+          updatedByUserId: ctx.user.id,
+          changeNote: adminNote,
+          currentPeriodStartsAt: periodStartsAt,
+          currentPeriodEndsAt: periodEndsAt,
+          updatedAt: now,
+        }).onConflictDoUpdate({
+          target: schoolSubscriptions.schoolId,
+          set: {
+            plan: payment.plan,
+            status: "active",
+            billingPeriod: payment.billingPeriod,
+            updatedByUserId: ctx.user.id,
+            changeNote: adminNote,
+            currentPeriodStartsAt: periodStartsAt,
+            currentPeriodEndsAt: periodEndsAt,
+            updatedAt: now,
+          },
+        });
+        await tx.insert(auditLogs).values({
+          schoolId: payment.schoolId,
+          actorUserId: ctx.user.id,
+          action: "platform.subscription_payment_manually_confirmed",
+          entityType: "subscriptionPayment",
+          entityId: String(payment.id),
+          metadata: { plan: payment.plan, billingPeriod: payment.billingPeriod, amount: payment.amount, currency: payment.currency, receiptNumber, note: input.note, verifiedExternally: true },
+        });
+        return { paymentId: payment.id, schoolId: payment.schoolId, status: "succeeded" as const, resolution: input.resolution };
+      });
+      return result;
     }),
     setSubscriptionPlan: protectedProcedure.input(z.object({
       schoolId: z.number().int().positive(),
@@ -315,10 +667,12 @@ export const schoolRouter = router({
         billingPeriod: input.billingPeriod,
         updatedByUserId: ctx.user.id,
         changeNote: input.changeNote,
+        currentPeriodStartsAt: null,
+        currentPeriodEndsAt: null,
         updatedAt: now,
       }).onConflictDoUpdate({
         target: schoolSubscriptions.schoolId,
-        set: { plan: input.plan, status: "active", billingPeriod: input.billingPeriod, updatedByUserId: ctx.user.id, changeNote: input.changeNote, updatedAt: now },
+        set: { plan: input.plan, status: "active", billingPeriod: input.billingPeriod, updatedByUserId: ctx.user.id, changeNote: input.changeNote, currentPeriodStartsAt: null, currentPeriodEndsAt: null, updatedAt: now },
       });
       await writeAuditLog({ actorUserId: ctx.user.id, action: "platform.subscription_plan_changed", entityType: "schoolSubscription", entityId: school.id, schoolId: school.id, metadata: {
         schoolName: school.name,

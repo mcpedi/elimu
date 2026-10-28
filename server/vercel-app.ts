@@ -3,9 +3,13 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerStorageProxy } from "./_core/storageProxy";
 import { appRouter } from "./routers";
 import { createContext } from "./_core/context";
+import { registerDarajaCallback } from "./finance/mpesa-callback";
 
 export function createApp() {
   const app = express();
+
+  // Daraja callbacks use a dedicated unguessable HTTPS path and a small JSON body.
+  registerDarajaCallback(app);
 
   // Keep the existing upload limits used by learner documents and school branding.
   app.use(express.json({ limit: "50mb" }));

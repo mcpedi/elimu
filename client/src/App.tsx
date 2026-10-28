@@ -14,7 +14,7 @@ function Router() {
   return (
     <Switch>
       <Route path={"/verify-card"} component={CardVerification} />
-      <Route path={"/subscription-preview"} component={SubscriptionPlans} />
+      <Route path={"/subscription-preview"} component={() => <SubscriptionPlans allowCheckout={false} />} />
       <Route path={"/setup/super-admin"} component={SuperAdminSetup} />
       <Route path={"/"} component={Home} />
       <Route path={"/login"} component={Home} />

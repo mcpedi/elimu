@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -82,6 +83,8 @@ export const schoolSubscriptions = pgTable("schoolSubscriptions", {
   billingPeriod: text("billingPeriod").$type<"none" | "monthly" | "annual">().notNull().default("none"),
   updatedByUserId: integer("updatedByUserId").references(() => users.id),
   changeNote: text("changeNote"),
+  currentPeriodStartsAt: timestamp("currentPeriodStartsAt"),
+  currentPeriodEndsAt: timestamp("currentPeriodEndsAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, table => [
@@ -91,6 +94,57 @@ export const schoolSubscriptions = pgTable("schoolSubscriptions", {
 
 export type SchoolSubscription = typeof schoolSubscriptions.$inferSelect;
 export type InsertSchoolSubscription = typeof schoolSubscriptions.$inferInsert;
+
+export const subscriptionPayments = pgTable("subscriptionPayments", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("schoolId").notNull().references(() => schools.id),
+  userId: integer("userId").notNull().references(() => users.id),
+  plan: text("plan").$type<"Pro" | "Enterprise">().notNull(),
+  billingPeriod: text("billingPeriod").$type<"monthly" | "annual">().notNull(),
+  amount: integer("amount").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("KES"),
+  phoneNumber: varchar("phoneNumber", { length: 12 }).notNull(),
+  idempotencyKey: varchar("idempotencyKey", { length: 36 }).notNull(),
+  expectedSubscriptionUpdatedAt: timestamp("expectedSubscriptionUpdatedAt"),
+  checkoutRequestId: varchar("checkoutRequestId", { length: 128 }),
+  merchantRequestId: varchar("merchantRequestId", { length: 128 }),
+  receiptNumber: varchar("receiptNumber", { length: 32 }),
+  status: text("status").$type<"initiating" | "pending" | "succeeded" | "failed" | "review_required">().notNull().default("initiating"),
+  callbackResultCode: integer("callbackResultCode"),
+  callbackResultDescription: text("callbackResultDescription"),
+  callbackAmount: integer("callbackAmount"),
+  callbackPhoneNumber: varchar("callbackPhoneNumber", { length: 12 }),
+  callbackReceivedAt: timestamp("callbackReceivedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+}, table => [
+  uniqueIndex("subscription_payment_idempotency_unique").on(table.idempotencyKey),
+  uniqueIndex("subscription_payment_checkout_unique").on(table.checkoutRequestId),
+  uniqueIndex("subscription_payment_receipt_unique").on(table.receiptNumber),
+  uniqueIndex("subscription_payment_one_inflight_per_school").on(table.schoolId).where(sql`${table.status} in ('initiating', 'pending', 'review_required')`),
+  index("subscription_payment_school_status_index").on(table.schoolId, table.status),
+  index("subscription_payment_user_created_index").on(table.userId, table.createdAt),
+]);
+export type SubscriptionPayment = typeof subscriptionPayments.$inferSelect;
+export type InsertSubscriptionPayment = typeof subscriptionPayments.$inferInsert;
+
+export const subscriptionPaymentCallbacks = pgTable("subscriptionPaymentCallbacks", {
+  id: serial("id").primaryKey(),
+  checkoutRequestId: varchar("checkoutRequestId", { length: 128 }).notNull(),
+  merchantRequestId: varchar("merchantRequestId", { length: 128 }).notNull(),
+  resultCode: integer("resultCode").notNull(),
+  resultDescription: text("resultDescription"),
+  amount: integer("amount"),
+  phoneNumber: varchar("phoneNumber", { length: 12 }),
+  receiptNumber: varchar("receiptNumber", { length: 32 }),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  processedAt: timestamp("processedAt"),
+}, table => [
+  uniqueIndex("subscription_payment_callback_checkout_unique").on(table.checkoutRequestId),
+  index("subscription_payment_callback_pending_index").on(table.processedAt, table.receivedAt),
+]);
+export type SubscriptionPaymentCallback = typeof subscriptionPaymentCallbacks.$inferSelect;
 
 export const academicYears = pgTable("academicYears", {
   id: serial("id").primaryKey(),
