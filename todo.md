@@ -296,3 +296,16 @@
 - [x] Add category clear controls with confirmation and empty-state feedback.
 - [x] Add regression tests, responsive visual validation, and a checkpoint.
 - [x] Fix reported unresponsive notification buttons and verify all click/mutation flows.
+
+- [x] Replace the bare public sign-in screen with a landing page that explains the product beside the sign-in card.
+- [x] Simplify sign-in into one Learner / Staff switch, removing the duplicated portal switch and back links.
+- [x] Remove the dead dashboard "Quick action" control and make the overview quick actions open Students, Attendance, and Fees.
+- [x] Clarify vague workspace labels ("Daily tasks", "Search & alerts") without changing navigation ids or mobile priorities.
+- [x] Add regression coverage for the sign-in grouping and landing capabilities, then rerun type checks and the suite.
+
+- [x] Add server-side builders that rank a class, compute mean, grade distribution, and subject means for one term.
+- [x] Add server-side fee statement builder with term scoping, per-learner balances, and class totals.
+- [x] Add protected report procedures (class result sheet, class fee statements, sheet options) with role and class-assignment checks.
+- [x] Replace the placeholder Reports cards with a working report builder that previews and prints both documents.
+- [x] Share the printable document shell across report cards, result sheets, and fee statements, logging every print as an export.
+- [x] Add regression coverage for the sheet maths and procedure permissions, then rerun type checks and the suite.

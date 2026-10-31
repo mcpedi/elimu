@@ -38,6 +38,7 @@ import {
   users,
 } from "../../drizzle/schema";
 import { buildTermPerformanceTrend, calculateGrade, DEFAULT_KENYAN_GRADING_SCALE, summarizeMarks, summarizePerformanceEntries } from "../academics";
+import { buildClassResultSheet, buildFeeStatementSheet } from "../report-sheets";
 import { summarizeAttendance } from "../attendance";
 import { getDb, writeAuditLog } from "../db";
 import { adjustFeeDue, applyPayment } from "../fee-calculations";
@@ -2046,6 +2047,85 @@ export const schoolRouter = router({
   }),
 
   reports: router({
+    sheetOptions: protectedProcedure.query(async ({ ctx }) => {
+      requireRole(ctx.user, ["super_admin", "principal", "deputy_principal", "teacher", "class_teacher", "bursar"]);
+      const { db, school } = await getOperatingSchool();
+      const [classRows, years, learnerRows] = await Promise.all([
+        db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(eq(schoolClasses.schoolId, school.id)).orderBy(asc(schoolClasses.form), asc(schoolClasses.stream)),
+        db.select({ id: academicYears.id, name: academicYears.name, isActive: academicYears.isActive }).from(academicYears).where(eq(academicYears.schoolId, school.id)).orderBy(desc(academicYears.startsOn)),
+        db.select({ currentClassId: students.currentClassId }).from(students).where(and(eq(students.schoolId, school.id), eq(students.status, "active"))),
+      ]);
+      const termRows = years.length ? await db.select({ id: terms.id, name: terms.name, academicYearId: terms.academicYearId, isActive: terms.isActive }).from(terms).where(inArray(terms.academicYearId, years.map(year => year.id))).orderBy(asc(terms.startsOn)) : [];
+      const learnerCounts = new Map<number, number>();
+      for (const row of learnerRows) if (row.currentClassId !== null) learnerCounts.set(row.currentClassId, (learnerCounts.get(row.currentClassId) ?? 0) + 1);
+      return {
+        classes: classRows.map(row => ({ ...row, learners: learnerCounts.get(row.id) ?? 0 })),
+        academicYears: years,
+        terms: termRows,
+      };
+    }),
+    classResultSheet: protectedProcedure.input(z.object({ classId: z.number().int().positive(), academicYearId: z.number().int().positive(), termId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, academicRoles);
+      const { db, school } = await getOperatingSchool();
+      await assertTeacherAssignment(ctx.user.id, ctx.user.role, input.classId);
+      const [classRecord] = await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!classRecord) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found in this school." });
+      const [yearRecord] = await db.select({ id: academicYears.id, name: academicYears.name }).from(academicYears).where(and(eq(academicYears.id, input.academicYearId), eq(academicYears.schoolId, school.id))).limit(1);
+      if (!yearRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select an academic year from this school." });
+      const [termRecord] = await db.select({ id: terms.id, name: terms.name }).from(terms).where(and(eq(terms.id, input.termId), eq(terms.academicYearId, input.academicYearId))).limit(1);
+      if (!termRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term from the selected academic year." });
+      const learners = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo }).from(students).where(and(eq(students.schoolId, school.id), eq(students.currentClassId, input.classId), eq(students.status, "active"))).orderBy(asc(students.lastName), asc(students.firstName), asc(students.admissionNo));
+      const cards = learners.length ? await db.select({ studentId: reportCards.studentId, resultSnapshot: reportCards.resultSnapshot }).from(reportCards).where(and(eq(reportCards.schoolId, school.id), eq(reportCards.academicYearId, input.academicYearId), eq(reportCards.termId, input.termId), eq(reportCards.classId, input.classId), inArray(reportCards.studentId, learners.map(learner => learner.id)))) : [];
+      const resultsByStudent = new Map<number, typeof cards[number]["resultSnapshot"]>();
+      for (const card of cards) resultsByStudent.set(card.studentId, card.resultSnapshot);
+      const sheet = buildClassResultSheet(
+        learners.map(learner => ({ studentId: learner.id, firstName: learner.firstName, lastName: learner.lastName, admissionNo: learner.admissionNo, results: resultsByStudent.get(learner.id) ?? [] })),
+        school.gradeScale ?? DEFAULT_KENYAN_GRADING_SCALE,
+      );
+      return {
+        school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null },
+        class: classRecord,
+        academicYear: yearRecord.name,
+        term: termRecord.name,
+        ...sheet,
+      };
+    }),
+    feeStatementSheet: protectedProcedure.input(z.object({ classId: z.number().int().positive(), termId: z.number().int().positive().nullish() })).query(async ({ ctx, input }) => {
+      requireRole(ctx.user, financeRoles);
+      const { db, school } = await getOperatingSchool();
+      const [classRecord] = await db.select({ id: schoolClasses.id, form: schoolClasses.form, stream: schoolClasses.stream }).from(schoolClasses).where(and(eq(schoolClasses.id, input.classId), eq(schoolClasses.schoolId, school.id))).limit(1);
+      if (!classRecord) throw new TRPCError({ code: "NOT_FOUND", message: "Class not found in this school." });
+      let termRecord: { id: number; name: string } | undefined;
+      if (input.termId) {
+        [termRecord] = await db.select({ id: terms.id, name: terms.name }).from(terms).innerJoin(academicYears, eq(terms.academicYearId, academicYears.id)).where(and(eq(terms.id, input.termId), eq(academicYears.schoolId, school.id))).limit(1);
+        if (!termRecord) throw new TRPCError({ code: "BAD_REQUEST", message: "Select a term that belongs to this school." });
+      }
+      const learners = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, admissionNo: students.admissionNo }).from(students).where(and(eq(students.schoolId, school.id), eq(students.currentClassId, input.classId), eq(students.status, "active"))).orderBy(asc(students.lastName), asc(students.firstName), asc(students.admissionNo));
+      const learnerIds = learners.map(learner => learner.id);
+      const [chargeRows, paymentRows] = learnerIds.length ? await Promise.all([
+        db.select({ studentId: studentFeeAccounts.studentId, feeName: feeStructures.name, termId: feeStructures.termId, due: studentFeeAccounts.amountDue, paid: studentFeeAccounts.amountPaid, status: studentFeeAccounts.status, dueDate: studentFeeAccounts.dueDate }).from(studentFeeAccounts).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(and(eq(feeStructures.schoolId, school.id), inArray(studentFeeAccounts.studentId, learnerIds), ...(input.termId ? [eq(feeStructures.termId, input.termId)] : []))),
+        db.select({ studentId: payments.studentId, receiptNo: payments.receiptNo, amount: payments.amount, method: payments.method, paymentDate: payments.paymentDate }).from(payments).innerJoin(students, eq(payments.studentId, students.id)).innerJoin(studentFeeAccounts, eq(payments.studentFeeAccountId, studentFeeAccounts.id)).innerJoin(feeStructures, eq(studentFeeAccounts.feeStructureId, feeStructures.id)).where(and(eq(students.schoolId, school.id), eq(feeStructures.schoolId, school.id), inArray(payments.studentId, learnerIds), ...(input.termId ? [eq(feeStructures.termId, input.termId)] : []))).orderBy(desc(payments.paymentDate)),
+      ]) : [[], []];
+      const chargesByStudent = new Map<number, Array<{ feeName: string; termId: number | null; due: number; paid: number; status: string; dueDate: string | null }>>();
+      for (const row of chargeRows) {
+        const list = chargesByStudent.get(row.studentId) ?? [];
+        list.push({ feeName: row.feeName, termId: row.termId ?? null, due: Number(row.due), paid: Number(row.paid), status: row.status, dueDate: row.dueDate ? new Date(row.dueDate).toISOString().slice(0, 10) : null });
+        chargesByStudent.set(row.studentId, list);
+      }
+      const paymentsByStudent = new Map<number, Array<{ receiptNo: string; amount: number; method: string; paymentDate: string }>>();
+      for (const row of paymentRows) {
+        const list = paymentsByStudent.get(row.studentId) ?? [];
+        list.push({ receiptNo: row.receiptNo, amount: Number(row.amount), method: row.method, paymentDate: new Date(row.paymentDate).toISOString().slice(0, 10) });
+        paymentsByStudent.set(row.studentId, list);
+      }
+      const sheet = buildFeeStatementSheet(learners.map(learner => ({ studentId: learner.id, firstName: learner.firstName, lastName: learner.lastName, admissionNo: learner.admissionNo, charges: chargesByStudent.get(learner.id) ?? [], payments: paymentsByStudent.get(learner.id) ?? [] })), { termId: input.termId ?? null });
+      return {
+        school: { name: school.name, code: school.code, phone: school.phone, email: school.email, address: school.address, logoUrl: school.logoKey ? `/manus-storage/${school.logoKey}` : null },
+        class: classRecord,
+        term: termRecord ?? null,
+        ...sheet,
+      };
+    }),
     recordExport: protectedProcedure.input(z.object({ reportType: z.string().min(2).max(100), format: z.enum(["pdf", "excel"]), filters: z.record(z.string(), z.string()).optional() })).mutation(async ({ ctx, input }) => {
       const { db, school } = await getOperatingSchool();
       await db.insert(reportExports).values({ schoolId: school.id, userId: ctx.user.id, reportType: input.reportType, format: input.format, filters: input.filters ?? {} });
