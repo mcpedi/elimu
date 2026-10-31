@@ -8,7 +8,7 @@ import { Bell, ChevronDown, LogOut, Menu, Moon, Sun, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
-import StudentLoginCard from "@/components/StudentLoginCard";
+import PublicAuthPage from "@/components/PublicAuthPage";
 import { BRAND_LOGO_URL, BRAND_NAME, BRAND_TAGLINE } from "@/const";
 import LiveNotificationCenter from "./LiveNotificationCenter";
 export { NOTIFICATION_REFRESH_INTERVAL_MS, notificationBadgeLabel } from "./notification-utils";
@@ -58,7 +58,7 @@ export default function DashboardLayout({ children, navigation, activeId, onNavi
 
   if (loading) return <DashboardLayoutSkeleton />;
 
-  if (!user) return <StudentLoginCard />;
+  if (!user) return <PublicAuthPage />;
 
   const navigate = (id: string) => {
     onNavigate(id);
