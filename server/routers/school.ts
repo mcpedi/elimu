@@ -463,24 +463,55 @@ export const schoolRouter = router({
       email: z.string().trim().email().max(320),
       name: z.string().trim().min(2).max(160),
       role: schoolRoleSchema.exclude(["user"]),
+      admissionNo: z.string().trim().min(1).max(40).optional(),
+      employeeNo: z.string().trim().min(1).max(40).optional(),
+    }).superRefine((input, refinement) => {
+      if (input.role === "student" && !input.admissionNo) refinement.addIssue({ code: "custom", path: ["admissionNo"], message: "Admission number is required for student accounts." });
+      if (["teacher", "class_teacher"].includes(input.role) && !input.employeeNo) refinement.addIssue({ code: "custom", path: ["employeeNo"], message: "Employee number is required for teaching accounts." });
+      if (input.role !== "student" && input.admissionNo) refinement.addIssue({ code: "custom", path: ["admissionNo"], message: "Admission number is only used for student accounts." });
+      if (!["teacher", "class_teacher"].includes(input.role) && input.employeeNo) refinement.addIssue({ code: "custom", path: ["employeeNo"], message: "Employee number is only used for teaching accounts." });
     })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user, ["super_admin"]);
       const { db, school } = await getOperatingSchool();
       const email = input.email.toLowerCase();
       const existing = await db.select({ id: users.id }).from(users).where(and(eq(users.schoolId, school.id), eq(users.email, email))).limit(1);
       if (existing.length) throw new TRPCError({ code: "CONFLICT", message: "A user with that email already exists in this school." });
-      const [account] = await db.insert(users).values({
-        openId: `local_${randomUUID()}`,
-        schoolId: school.id,
-        name: input.name,
-        email,
-        loginMethod: "local",
-        role: input.role,
-      }).returning({ id: users.id, name: users.name, email: users.email, role: users.role });
-      if (!account) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The user account could not be created." });
+      let linkedProfile: { type: "student" | "teacher"; id: number; label: string } | null = null;
+      if (input.role === "student") {
+        const [student] = await db.select({ id: students.id, userId: students.userId, admissionNo: students.admissionNo }).from(students).where(and(eq(students.schoolId, school.id), eq(students.admissionNo, input.admissionNo!))).limit(1);
+        if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "No student with that admission number exists in this school." });
+        if (student.userId) throw new TRPCError({ code: "CONFLICT", message: "This student already has a login account." });
+        linkedProfile = { type: "student", id: student.id, label: student.admissionNo };
+      }
+      if (input.role === "teacher" || input.role === "class_teacher") {
+        const [teacher] = await db.select({ id: teachers.id, userId: teachers.userId, employeeNo: teachers.employeeNo }).from(teachers).where(and(eq(teachers.schoolId, school.id), eq(teachers.employeeNo, input.employeeNo!))).limit(1);
+        if (!teacher) throw new TRPCError({ code: "NOT_FOUND", message: "No teacher with that employee number exists in this school." });
+        if (teacher.userId) throw new TRPCError({ code: "CONFLICT", message: "This teacher already has a login account." });
+        linkedProfile = { type: "teacher", id: teacher.id, label: teacher.employeeNo };
+      }
+      const account = await db.transaction(async tx => {
+        const [createdAccount] = await tx.insert(users).values({
+          openId: `local_${randomUUID()}`,
+          schoolId: school.id,
+          name: input.name,
+          email,
+          loginMethod: "local",
+          role: input.role,
+        }).returning({ id: users.id, name: users.name, email: users.email, role: users.role });
+        if (!createdAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The user account could not be created." });
+        if (linkedProfile?.type === "student") {
+          const result = await tx.update(students).set({ userId: createdAccount.id }).where(and(eq(students.id, linkedProfile.id), eq(students.schoolId, school.id), isNull(students.userId)));
+          if (result.rowCount !== 1) throw new TRPCError({ code: "CONFLICT", message: "This student already has a login account." });
+        }
+        if (linkedProfile?.type === "teacher") {
+          const result = await tx.update(teachers).set({ userId: createdAccount.id }).where(and(eq(teachers.id, linkedProfile.id), eq(teachers.schoolId, school.id), isNull(teachers.userId)));
+          if (result.rowCount !== 1) throw new TRPCError({ code: "CONFLICT", message: "This teacher already has a login account." });
+        }
+        return createdAccount;
+      });
       const setup = await issueLocalSetupCode(account.id);
-      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.created", entityType: "user", entityId: account.id, metadata: { email, role: input.role, setupCodeExpiresAt: setup.expiresAt.toISOString(), delivery: "school_office" } });
-      return { success: true, setupCode: setup.code, setupCodeExpiresAt: setup.expiresAt, user: account };
+      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.created", entityType: "user", entityId: account.id, metadata: { email, role: input.role, linkedProfileType: linkedProfile?.type ?? null, linkedProfileId: linkedProfile?.id ?? null, linkedProfileLabel: linkedProfile?.label ?? null, setupCodeExpiresAt: setup.expiresAt.toISOString(), delivery: "school_office" } });
+      return { success: true, setupCode: setup.code, setupCodeExpiresAt: setup.expiresAt, user: account, linkedProfile };
     }),
   }),
 
