@@ -10,14 +10,14 @@ import { BRAND_LOGO_URL, BRAND_NAME, BRAND_TAGLINE } from "@/const";
 
 type AccessMode = "learner" | "staff" | "reset" | "staff-reset" | "setup";
 
-type AccessModeConfig = { portal: "Learner portal" | "School access"; title: string; description: string };
+type AccessModeConfig = { portal: "Learner portal" | "School access" | "Account setup"; title: string; description: string };
 
 export const ACCESS_MODE_COPY: Record<AccessMode, AccessModeConfig> = {
   learner: { portal: "Learner portal", title: "Access your results.", description: "Enter your school code, full name, and admission number or private password." },
   reset: { portal: "Learner portal", title: "Reset your password.", description: "Enter your school code and a one-time reset code issued by the school office." },
   staff: { portal: "School access", title: "Welcome back.", description: "Sign in with the username and password issued by your school administrator." },
   "staff-reset": { portal: "School access", title: "Reset your password.", description: "Use a one-time recovery code issued by your school administrator to reset your school account password." },
-  setup: { portal: "School access", title: "Set up your account.", description: "Use the one-time setup code from your school administrator to create your private sign-in." },
+  setup: { portal: "Account setup", title: "Set up your account.", description: "Use the one-time setup code from your school administrator to create your private sign-in." },
 };
 
 export function accessFlow(mode: AccessMode): "learner" | "staff" {
@@ -122,7 +122,10 @@ export default function StudentLoginCard() {
             </div>
             {rememberMeField("learner-remember-me")}
             <Button type="submit" size="lg" disabled={busy} className="mt-2 w-full rounded-xl bg-[#0d4437] text-white hover:bg-[#092f26]">{login.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LockKeyhole className="mr-2 h-4 w-4" />}Sign in to results</Button>
-            <Button type="button" variant="ghost" onClick={() => setMode("reset")} className="w-full rounded-xl text-[#0d4437] hover:bg-emerald-50 hover:text-[#092f26] dark:text-emerald-300 dark:hover:bg-emerald-950/30">Forgot password?</Button>
+            <div className="flex flex-col gap-1">
+              <Button type="button" variant="ghost" onClick={() => setMode("reset")} className="w-full rounded-xl text-[#0d4437] hover:bg-emerald-50 hover:text-[#092f26] dark:text-emerald-300 dark:hover:bg-emerald-950/30">Forgot password?</Button>
+              <Button type="button" variant="ghost" onClick={() => setMode("setup")} className="w-full rounded-xl text-[#0d4437] hover:bg-emerald-50 dark:text-emerald-300">Have an admin setup code? Set up your account</Button>
+            </div>
           </form>
         ) : null}
 
