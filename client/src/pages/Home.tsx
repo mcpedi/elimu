@@ -135,7 +135,7 @@ export function roleNavigation(role?: string, isPlatformAdmin = false): Navigati
 
 
 export const MODULE_WORKFLOW_OWNERS = {
-  students: ["registration", "learner records", "student lifecycle", "account access", "password recovery", "subject allocation", "digital IDs", "bulk import"],
+  students: ["registration", "learner records", "class assignment", "student lifecycle", "account access", "password recovery", "subject allocation", "digital IDs", "bulk import"],
   teachers: ["teacher profiles", "teacher maintenance", "account access", "department assignment", "staff attendance", "teaching allocation", "class teacher assignment", "teaching workload"],
   academics: ["classes", "subjects", "departments", "assessment setup", "marks entry", "report cards", "class capacity"],
   attendance: ["class capture", "attendance exceptions"],
@@ -237,6 +237,9 @@ function StudentsPanel() {
   const [query, setQuery] = useState("");
   const [emailStatus, setEmailStatus] = useState<"all" | "linked" | "missing">("all");
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
+  const classes = trpc.school.academics.config.useQuery(undefined, { enabled: canManage });
+  const assignClass = trpc.school.mvp.bulk.assignClass.useMutation({ onSuccess: result => { toast.success(`${result.count} learner${result.count === 1 ? "" : "s"} assigned to the class.`); setAssignment({ studentId: "", classId: "" }); list.refetch(); }, onError: error => toast.error(error.message) });
+  const [assignment, setAssignment] = useState({ studentId: "", classId: "" });
   const list = trpc.school.students.list.useQuery({ query: query || undefined, emailStatus }, { enabled: isStaff });
   if (!isStaff) return <LinkedLearnerPanel />;
 
@@ -253,6 +256,7 @@ function StudentsPanel() {
       </TabsList>
       <TabsContent value="records" className="mt-0">
         {canManage ? <div className="mb-5"><StudentQuickRegister onCreated={() => list.refetch()} /></div> : null}
+        {canManage ? <Card className="mb-5 border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]"><CardHeader className="pb-3"><CardTitle className="text-base">Assign learner to a class</CardTitle><CardDescription>Move an existing learner into a class stream. The change is school-scoped and recorded in the audit log.</CardDescription></CardHeader><CardContent><form className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={event => { event.preventDefault(); if (!assignment.studentId || !assignment.classId) return toast.error("Choose a learner and a class."); assignClass.mutate({ studentIds: [Number(assignment.studentId)], classId: Number(assignment.classId) }); }}><div><Label htmlFor="student-class-assignment-student">Learner</Label><Select value={assignment.studentId} onValueChange={value => setAssignment({ ...assignment, studentId: value })}><SelectTrigger id="student-class-assignment-student" className="mt-2 rounded-xl"><SelectValue placeholder="Select learner" /></SelectTrigger><SelectContent>{(list.data ?? []).map(row => <SelectItem key={row.id} value={String(row.id)}>{row.firstName} {row.lastName} · {row.admissionNo}</SelectItem>)}</SelectContent></Select></div><div><Label htmlFor="student-class-assignment-class">Class</Label><Select value={assignment.classId} onValueChange={value => setAssignment({ ...assignment, classId: value })}><SelectTrigger id="student-class-assignment-class" className="mt-2 rounded-xl"><SelectValue placeholder="Select class" /></SelectTrigger><SelectContent>{(classes.data?.classes ?? []).map(row => <SelectItem key={row.id} value={String(row.id)}>{row.form} · {row.stream}</SelectItem>)}</SelectContent></Select></div><Button type="submit" disabled={assignClass.isPending} className="rounded-xl bg-[#0d4437] text-white sm:mt-7">{assignClass.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserCheck className="mr-2 h-4 w-4" />}Assign class</Button></form></CardContent></Card> : null}
         <Card className="border-emerald-950/8 bg-white/85 dark:border-white/8 dark:bg-[#172420]">
           <CardContent className="p-4 sm:p-5">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
