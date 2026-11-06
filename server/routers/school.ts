@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, like, lt, or, sql } from "drizzle-orm";
 import { normalizeSuspensionReason } from "../account-suspension";
 import { z } from "zod";
@@ -53,6 +54,7 @@ import { createDarajaAdapter, DarajaRequestError, getDarajaConfig, isDarajaCheck
 import { addBillingPeriod, processPendingDarajaCallback } from "../finance/mpesa-callback";
 import { getSubscriptionPrice, type PaidBillingPeriod, type PaidSubscriptionPlan } from "../../shared/subscription-pricing";
 import { mvpRouter } from "./mvp";
+import { issueLocalSetupCode } from "../local-auth";
 
 const schoolRoleSchema = z.enum([
   "user",
@@ -456,6 +458,29 @@ export const schoolRouter = router({
       await db.update(users).set({ role: input.role }).where(and(eq(users.id, input.userId), eq(users.schoolId, school.id)));
       await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.role_assigned", entityType: "user", entityId: input.userId, metadata: { role: input.role } });
       return { success: true };
+    }),
+    createUser: protectedProcedure.input(z.object({
+      email: z.string().trim().email().max(320),
+      name: z.string().trim().min(2).max(160),
+      role: schoolRoleSchema.exclude(["user"]),
+    })).mutation(async ({ ctx, input }) => {
+      requireRole(ctx.user, ["super_admin"]);
+      const { db, school } = await getOperatingSchool();
+      const email = input.email.toLowerCase();
+      const existing = await db.select({ id: users.id }).from(users).where(and(eq(users.schoolId, school.id), eq(users.email, email))).limit(1);
+      if (existing.length) throw new TRPCError({ code: "CONFLICT", message: "A user with that email already exists in this school." });
+      const [account] = await db.insert(users).values({
+        openId: `local_${randomUUID()}`,
+        schoolId: school.id,
+        name: input.name,
+        email,
+        loginMethod: "local",
+        role: input.role,
+      }).returning({ id: users.id, name: users.name, email: users.email, role: users.role });
+      if (!account) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The user account could not be created." });
+      const setup = await issueLocalSetupCode(account.id);
+      await writeAuditLog({ actorUserId: ctx.user.id, schoolId: school.id, action: "user.created", entityType: "user", entityId: account.id, metadata: { email, role: input.role, setupCodeExpiresAt: setup.expiresAt.toISOString(), delivery: "school_office" } });
+      return { success: true, setupCode: setup.code, setupCodeExpiresAt: setup.expiresAt, user: account };
     }),
   }),
 
